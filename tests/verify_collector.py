@@ -61,7 +61,7 @@ check("61秒はショートでない", 0 < collect.parse_duration("PT1M1S") <= c
 # --- 3. キーワード辞書 ----------------------------------------------------
 
 print("\n[3] keywords.yml の読み取り")
-genres, modifiers = collect.load_keywords()
+genres, modifiers, required_any, exclude = collect.load_keywords()
 check("主ジャンル数", len(genres), 12)
 check("掛け合わせ語数", len(modifiers), 6)
 check("主ジャンルは1ジャンル1語", [len(v) for v in genres.values()], lambda v: set(v) == {1})
@@ -79,6 +79,10 @@ check("簡易パーサでも主ジャンルが一致", {k: v for k, v in raw["ge
 check("簡易パーサでも掛け合わせが一致", {k: v for k, v in raw["modifiers"].items()},
       {k: v for k, v in modifiers.items()})
 check("簡易パーサはコメント行を読まない", raw["genres"], lambda g: "#" not in "".join(g))
+check("関連度フィルタが全ジャンル分ある", sorted(required_any), sorted(genres))
+check("除外語が読める", exclude, lambda e: "クレヨンしんちゃん" in e and len(e) >= 5)
+check("あえて入れない語は入っていない", exclude,
+      lambda e: not any(w in e for w in ["ASMR", "vlog", "コント"]))
 
 # --- 4. Threads 版と同じ構成か --------------------------------------------
 
@@ -89,6 +93,8 @@ if THREADS_CONFIG.exists():
     check("掛け合わせ語が一致（並び順まで）", list(modifiers), list(threads["modifiers"]))
     for name, spec in threads["modifiers"].items():
         check(f"combine_with が一致: {name}", modifiers.get(name), spec["combine_with"])
+    for name, spec in threads["genres"].items():
+        check(f"required_any が一致: {name}", required_any.get(name), spec["required_any"])
 else:
     print(f"  -- Threads 版の設定が見つからないので照合を飛ばす: {THREADS_CONFIG}")
 
@@ -178,7 +184,10 @@ record = collect.build_record(
 check("スキーマの項目が揃っている", sorted(record.keys()), sorted([
     "videoId", "title", "channelId", "channelTitle", "subscriberCount", "publishedAt",
     "durationSec", "isShort", "thumbnail", "viewCount", "likeCount", "commentCount",
-    "categories", "modifiers", "matchedKeywords", "score", "collectedAt"]))
+    "categories", "modifiers", "matchedKeywords", "score", "collectedAt",
+    # ふるい分けの判定根拠。あとで「なぜ残った/落ちた」を追えるように保存する
+    "audioLanguage"]))
+check("言語の申告を拾う", record["audioLanguage"], "")
 check("再生数が数値になる", record["viewCount"], 120000)
 check("58秒はショート", record["isShort"], True)
 check("サムネイルは medium を使う", record["thumbnail"], "https://i.ytimg.com/vi/abc/mqdefault.jpg")
@@ -433,6 +442,66 @@ check("同じチャンネルを二重に問い合わせない",
       len(fake.channels_log[0]), len(set(fake.channels_log[0])))
 check("登録者数が入る", by_id["vid_aaa"]["subscriberCount"], 5000)
 check("消費ユニット（検索4 + 詳細1 + チャンネル1）", run_tracker.units, 4 * 100 + 2)
+
+# --- 14. ふるい分け（海外・無関係の動画を落とす）---------------------------
+
+print("\n[14] ふるい分け")
+
+
+def rec(title, channel="ch", cats=("ヘッドスパ",), lang=""):
+    return {"title": title, "channelTitle": channel,
+            "categories": list(cats), "audioLanguage": lang}
+
+
+# 言語の判定
+check("日本語のタイトルは残す", collect.is_japanese(rec("極上ヘッドスパの施術")), True)
+check("英語だけのタイトルは落とす",
+      collect.is_japanese(rec("The Craziest Hair Appointment", "Hoodlum Boys")), False)
+check("チャンネル名だけ日本語でも残す",
+      collect.is_japanese(rec("Esthetic Massage", "エステレポートチャンネル")), True)
+check("漢字だけのタイトルも残す", collect.is_japanese(rec("腰痛", "WIZ鍼灸整骨院")), True)
+check("APIがjaと申告していれば英語表記でも残す",
+      collect.is_japanese(rec("HEAD SPA ASMR", "benio", lang="ja")), True)
+check("APIがenと申告していれば日本語が混じっても落とす",
+      collect.is_japanese(rec("Pilates ピラティス", "Mark", lang="en-US")), False)
+check("ja-JP のような表記も日本語として扱う",
+      collect.is_japanese(rec("Head Spa", "x", lang="ja-JP")), True)
+
+# 関連度の判定
+check("ジャンルの語が入っていれば残す",
+      collect.is_relevant(rec("ヘッドスパで頭皮を整える"), required_any), True)
+check("ジャンルの語が1つも無ければ落とす",
+      collect.is_relevant(rec("オカン、子なし韓国で大暴れ", cats=("アートメイク",)), required_any), False)
+check("複数ジャンルはどれか1つ当たれば残す",
+      collect.is_relevant(rec("鍼灸院のツボ講座", cats=("ヘッドスパ", "鍼灸")), required_any), True)
+check("required_any が無いジャンルは素通しする",
+      collect.is_relevant(rec("なんでも", cats=("未知ジャンル",)), required_any), True)
+
+# 除外語
+check("除外語に当たれば語を返す",
+      collect.excluded_word(rec("育毛剤 #クレヨンしんちゃん"), exclude), "クレヨンしんちゃん")
+check("除外語に当たらなければ None",
+      collect.excluded_word(rec("ヘッドスパの施術"), exclude), None)
+check("「コント」を除外語に入れていないので巻き込まない",
+      collect.excluded_word(rec("脊柱コントロールとピラティス"), exclude), None)
+check("ASMR は除外しない（本物のヘッドスパ動画のため）",
+      collect.excluded_word(rec("【ASMR】極上ヘッドスパ"), exclude), None)
+
+# まとめて適用したとき
+mixed = [
+    rec("ヘッドスパで頭皮を整える"),                                    # 残る
+    rec("The Craziest Hair Appointment", "Hoodlum Boys", ("美容サロン",)),  # 海外
+    rec("育毛剤 #クレヨンしんちゃん", "クレしん日記", ("育毛",)),          # 除外語
+    rec("オカン、子なし韓国で大暴れ", "古川優香", ("アートメイク",)),      # 無関係
+]
+kept, dropped, examples = collect.apply_filters(mixed, required_any, exclude)
+check("残るのは1件", len(kept), 1)
+check("残った動画", kept[0]["title"], "ヘッドスパで頭皮を整える")
+check("落とした理由の内訳", dropped, {"海外": 1, "無関係": 1, "除外語": 1})
+check("落とした例に除外語が添えられる", examples["除外語"][0], lambda t: "クレヨンしんちゃん" in t)
+check("除外語は無関係より先に判定する（理由が正しく出る）",
+      collect.apply_filters([rec("育毛剤 #クレヨンしんちゃん", "x", ("育毛",))],
+                            required_any, exclude)[1]["除外語"], 1)
 
 # --- まとめ ---------------------------------------------------------------
 

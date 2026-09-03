@@ -151,8 +151,9 @@ check('JSエラーが無い（カードが描かれている）', cards().length
 check('90日以内の動画が全て表示される', cards().length, SHOWN_DEFAULT);
 check('最終更新が表示されている', $('#stamp').textContent, (t) => /最終更新 \d/.test(t));
 check('件数表示', $('#count').textContent, (t) => t.includes(`${SHOWN_DEFAULT} 件を表示中`));
-check('集計：表示中', $('#sum-shown').textContent, String(SHOWN_DEFAULT));
-check('集計：収集数', $('#sum-total').textContent, String(DATA.videos.length));
+// 画面は3桁区切りで出す（1053 → 1,053）。生の数字ではなく整形後と比べる。
+check('集計：表示中', $('#sum-shown').textContent, SHOWN_DEFAULT.toLocaleString('ja-JP'));
+check('集計：収集数', $('#sum-total').textContent, DATA.videos.length.toLocaleString('ja-JP'));
 check('集計：チャンネル数', Number($('#sum-channels').textContent),
   new Set(DATA.videos.map((v) => v.channelId)).size);
 check('主ジャンル内訳の行数', $$('#breakdown .bar-row').length, DATA.categories.length);
@@ -289,9 +290,16 @@ check('0件のチップに pending が付く',
 check('pending チップは選べないと伝える',
   $$('#categories .chip').find((c) => c.dataset.name).getAttribute('aria-disabled'), 'true');
 await type('');
-check('検索を戻すと pending も外れる',
-  $$('#categories .chip').filter((c) => c.dataset.name).some((c) => c.classList.contains('pending')),
-  false);
+// 検索を戻しても、実データで本当に0件のカテゴリは pending のまま残るのが正しい。
+// （例: パーマネントジュエリーは日本語の動画がほとんど無く0件になる）
+const emptyInData = DATA.categories.filter((c) =>
+  !DATA.videos.some((v) => (v.categories || []).includes(c)
+    && (Date.now() - Date.parse(v.publishedAt)) / 86400000 <= 90));
+const pendingNow = $$('#categories .chip')
+  .filter((c) => c.dataset.name && c.classList.contains('pending'))
+  .map((c) => c.dataset.name);
+check('検索を戻すと、本当に0件のカテゴリだけ pending が残る',
+  pendingNow.sort(), emptyInData.slice().sort());
 
 // --- 4. 検索 --------------------------------------------------------------
 

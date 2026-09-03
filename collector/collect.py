@@ -72,10 +72,12 @@ HISTORY_KEEP_DAYS = 30
 
 def load_keywords(path=KEYWORDS_FILE):
     """
-    keywords.yml を読み、(主ジャンル辞書, 掛け合わせ辞書) を YAML の並び順で返す。
+    keywords.yml を読み、4つをまとめて返す。並びは YAML のとおり。
 
-      genres    … {ジャンル名: [検索語, ...]}
-      modifiers … {掛け合わせ語: [組ませる主ジャンル名, ...]}
+      genres       … {ジャンル名: [検索語, ...]}
+      modifiers    … {掛け合わせ語: [組ませる主ジャンル名, ...]}
+      required_any … {ジャンル名: [関連語, ...]}  … 1語も含まない動画は捨てる
+      exclude      … [除外語, ...]                … 含んでいたら捨てる
 
     PyYAML が入っていればそれを使う。入っていない環境でも --mock を動かせるように、
     この辞書の形に限った簡易読み取りをフォールバックとして持っている。
@@ -95,7 +97,9 @@ def load_keywords(path=KEYWORDS_FILE):
                 result[str(key)] = items
         return result
 
-    return section("genres"), section("modifiers")
+    # exclude は分類ごとに分けて書いてあるが、判定では一列にして使う
+    excludes = [w for words in section("exclude").values() for w in words]
+    return section("genres"), section("modifiers"), section("required_any"), excludes
 
 
 def _parse_simple_yaml(text):
@@ -389,6 +393,9 @@ def build_record(video_id, item, subscriber_count, categories, modifiers, keywor
         "channelTitle": snippet.get("channelTitle") or "",
         "subscriberCount": subscriber_count,
         "publishedAt": snippet.get("publishedAt") or "",
+        # 言語の申告。ふるい分けに使うだけなので保存後は画面では使わない。
+        "audioLanguage": snippet.get("defaultAudioLanguage")
+        or snippet.get("defaultLanguage") or "",
         "durationSec": duration_sec,
         "isShort": 0 < duration_sec <= SHORT_MAX_SEC,
         "thumbnail": thumb,
@@ -402,6 +409,86 @@ def build_record(video_id, item, subscriber_count, categories, modifiers, keywor
         "score": {"velocity": 0.0, "acceleration": None, "subRatio": 0.0},
         "collectedAt": collected_at,
     }
+
+
+# --------------------------------------------------------------------------
+# ふるい分け（海外・無関係の動画を落とす）
+# --------------------------------------------------------------------------
+
+# ひらがな・カタカナ・漢字。1文字でもあれば日本語の動画とみなす。
+_JA_CHARS = re.compile(r"[ぁ-んァ-ヶー一-龯]")
+
+
+def is_japanese(record):
+    """
+    日本語の動画かどうか。
+
+    YouTube の relevanceLanguage=ja は「日本語を優先する」ヒントでしかなく、
+    日本語の動画が少ない語では海外の動画がそのまま返ってくる。
+    実測では拾った1,246件のうち157件（13%）が海外の動画だった。
+
+    判定は2段構え。API が言語を申告していればそれを信じ、
+    申告が無いときだけタイトルとチャンネル名の文字種で見る。
+    """
+    lang = (record.get("audioLanguage") or "").lower()
+    if lang.startswith("ja"):
+        return True
+    if lang:
+        # 日本語以外だと明示されている
+        return False
+    return bool(_JA_CHARS.search(record["title"] + record["channelTitle"]))
+
+
+def is_relevant(record, required_any):
+    """
+    そのジャンルの語がタイトルかチャンネル名に1つでも入っているか。
+
+    キーワードで引っかかっても中身が別物のことがあるため、関連語で裏を取る。
+    required_any を持たないジャンルは素通しする。
+    """
+    haystack = record["title"] + " " + record["channelTitle"]
+    for category in record["categories"]:
+        words = required_any.get(category)
+        if not words:
+            return True
+        if any(word in haystack for word in words):
+            return True
+    return False
+
+
+def excluded_word(record, exclude):
+    """除外語に当たっていればその語を返す。当たっていなければ None。"""
+    haystack = record["title"] + " " + record["channelTitle"]
+    for word in exclude:
+        if word in haystack:
+            return word
+    return None
+
+
+def apply_filters(videos, required_any, exclude):
+    """ふるいをかけ、(残った動画, 落とした理由ごとの件数, 落とした例) を返す。"""
+    kept = []
+    dropped = {"海外": 0, "無関係": 0, "除外語": 0}
+    examples = {"海外": [], "無関係": [], "除外語": []}
+
+    def note(reason, record, detail=""):
+        dropped[reason] += 1
+        if len(examples[reason]) < 5:
+            examples[reason].append(f"{record['title'][:44]} | @{record['channelTitle'][:16]}{detail}")
+
+    for record in videos:
+        if not is_japanese(record):
+            note("海外", record)
+            continue
+        word = excluded_word(record, exclude)
+        if word:
+            note("除外語", record, f" ←「{word}」")
+            continue
+        if not is_relevant(record, required_any):
+            note("無関係", record)
+            continue
+        kept.append(record)
+    return kept, dropped, examples
 
 
 # --------------------------------------------------------------------------
@@ -761,21 +848,77 @@ def merge_with_existing(videos, existing, genres, modifiers):
     return list(by_id.values())
 
 
+def refilter(genres, modifiers, required_any, exclude):
+    """
+    APIを呼ばずに、既存の videos.json へふるい分けだけを掛け直す。
+
+    keywords.yml の required_any / exclude を調整したときに、クォータを
+    1ユニットも使わずに効果を確かめられるようにするためのもの。
+    収集した日時（generatedAt）と消費ユニットは元のまま残す。
+    """
+    if not VIDEOS_FILE.exists():
+        print(f"エラー: {VIDEOS_FILE} がありません。先に収集を実行してください。", file=sys.stderr)
+        return 1
+
+    payload = json.loads(VIDEOS_FILE.read_text(encoding="utf-8"))
+    videos = payload.get("videos", [])
+    if not videos:
+        print("エラー: videos.json に動画が入っていません。", file=sys.stderr)
+        return 1
+
+    # 辞書から消えたカテゴリ名もこの機会に落とす
+    videos = drop_unknown_labels(videos, genres, modifiers)
+    before = len(payload["videos"])
+    videos, dropped, examples = apply_filters(videos, required_any, exclude)
+
+    print(f"ふるい分け: {before}件 → {len(videos)}件")
+    for reason, count in dropped.items():
+        if count:
+            print(f"  {reason}で除外: {count}件")
+            for line in examples[reason]:
+                print(f"      {line}")
+
+    if not videos:
+        print("エラー: ふるい分けで全件が消えました。videos.json は書き換えていません。",
+              file=sys.stderr)
+        return 1
+
+    videos.sort(key=lambda v: v["score"]["velocity"], reverse=True)
+    payload["videos"] = videos
+    payload["videoCount"] = len(videos)
+    payload["categories"] = list(genres)
+    payload["modifiers"] = list(modifiers)
+    # generatedAt と quotaUsed は「いつ収集したか」を示す値なので触らない
+    VIDEOS_FILE.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    print(f"保存: {VIDEOS_FILE.relative_to(BASE_DIR)}（{len(videos)}件）"
+          f" ※収集日時とクォータ消費は元のまま")
+
+    report_coverage(videos, list(genres), list(modifiers), {}, [])
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description="YouTube 美容トレンド収集")
     parser.add_argument("--mock", action="store_true",
                         help="APIを呼ばずサンプルデータを生成する（APIキー不要）")
     parser.add_argument("--limit", type=int, default=None,
                         help="検索するキーワード数の上限（試運転用）")
+    parser.add_argument("--refilter", action="store_true",
+                        help="APIを呼ばず、既存の videos.json にふるい分けだけ掛け直す"
+                             "（クォータを消費しない。キーワードを調整したときに使う）")
     args = parser.parse_args()
 
     now = datetime.now(JST)
     tracker = QuotaTracker()
 
-    genres, modifiers = load_keywords()
+    genres, modifiers, required_any, exclude = load_keywords()
     if not genres:
         print("エラー: keywords.yml から主ジャンルを読み取れませんでした。", file=sys.stderr)
         return 1
+
+    if args.refilter:
+        return refilter(genres, modifiers, required_any, exclude)
     plan = build_search_plan(genres, modifiers)
     categories = list(genres)
     modifier_names = list(modifiers)
@@ -812,6 +955,21 @@ def main():
         # クォータ超過は想定内なので失敗扱いにしない。
         # それ以外で0件なら、検索条件かキーが怪しいので失敗にして通知を出す。
         return 0 if quota_hit else 1
+
+    # ふるい分け。海外の動画と、キーワードには当たったが中身が別物の動画を落とす。
+    if not args.mock:
+        before = len(videos)
+        videos, dropped, examples = apply_filters(videos, required_any, exclude)
+        print(f"\nふるい分け: {before}件 → {len(videos)}件")
+        for reason, count in dropped.items():
+            if count:
+                print(f"  {reason}で除外: {count}件")
+                for line in examples[reason]:
+                    print(f"      {line}")
+        if not videos:
+            print("エラー: ふるい分けで全件が消えました。"
+                  "keywords.yml の required_any / exclude を見直してください。", file=sys.stderr)
+            return 1
 
     # 前回値は今日の分を書き出す前に読む（--mock は直前に履歴を作ることがあるのでここで読む）
     previous = load_previous_snapshot(today_name)
