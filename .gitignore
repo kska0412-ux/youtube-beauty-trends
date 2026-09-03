@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# テストの出力（スクリーンショット・CSV）
+tests/shots/
+
+# OS
+.DS_Store
+
+# APIキーを置く場所。万一作っても絶対にコミットしない
+.env
+*.key

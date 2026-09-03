@@ -1,0 +1,344 @@
+/* 明るい側を基準に全トークンを定義する。暗い側は下で上書きする。 */
+:root {
+  --bg: #f6f4f5;
+  --surface: #ffffff;
+  --surface-2: #fbf9fa;
+  --ink: #231c22;
+  --muted: #6f636c;
+  --border: #e4dee2;
+  --accent: #8b2f5f;
+  --accent-soft: #f7e9f0;
+  --rising: #0f7b6c;
+  --rising-soft: #e2f2ef;
+  --chip: #efeaed;
+  --focus: #8b2f5f;
+}
+/* OS が暗いとき。閲覧者が明るいテーマを選んでいればそちらを優先する。 */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #151114;
+    --surface: #1f1a1e;
+    --surface-2: #241e23;
+    --ink: #f0eaee;
+    --muted: #a3969e;
+    --border: #332b31;
+    --accent: #e086b0;
+    --accent-soft: #3a2130;
+    --rising: #4fc3ae;
+    --rising-soft: #16332e;
+    --chip: #2c2429;
+    --focus: #e086b0;
+  }
+}
+/* 閲覧者が明示的に暗いテーマを選んだとき。OS の設定に関係なく効かせる。 */
+:root[data-theme="dark"] {
+  --bg: #151114;
+  --surface: #1f1a1e;
+  --surface-2: #241e23;
+  --ink: #f0eaee;
+  --muted: #a3969e;
+  --border: #332b31;
+  --accent: #e086b0;
+  --accent-soft: #3a2130;
+  --rising: #4fc3ae;
+  --rising-soft: #16332e;
+  --chip: #2c2429;
+  --focus: #e086b0;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  /* 日本語本文でWebフォントを落とすと重いので、端末のフォントを使う（外部CDNへの依存もゼロにできる） */
+  font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP",
+               -apple-system, BlinkMacSystemFont, "Yu Gothic Medium", sans-serif;
+  line-height: 1.75;
+  font-feature-settings: "palt" 1;
+  /* 単語の途中で割らせない。1語が行に収まらないときだけ overflow-wrap で折る。 */
+  word-break: normal;
+  overflow-wrap: break-word;
+  line-break: strict;
+}
+
+.wrap { max-width: 960px; margin: 0 auto; padding: 36px 20px 96px; }
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* 文節のかたまり。ここで囲った範囲は途中で改行されない。
+   「を」「が」などの助詞が行頭に来るのを防ぐために使う。 */
+.nb { white-space: nowrap; }
+
+/* --- 見出し --- */
+.head { margin-bottom: 4px; }
+h1 {
+  font-family: "Hiragino Mincho ProN", "Yu Mincho", "YuMincho", serif;
+  font-weight: 700;
+  font-size: clamp(1.45rem, 4vw, 2rem);
+  line-height: 1.4;
+  letter-spacing: .01em;
+  margin: 0;
+  /* 意図した文節でだけ折れるよう、自動折り返しに任せない */
+  word-break: keep-all;
+  overflow-wrap: normal;
+}
+.ver {
+  font-size: .78rem;
+  color: var(--muted);
+  margin: 8px 0 0;
+  line-height: 1.7;
+}
+.stamp {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .7rem;
+  color: var(--muted);
+  margin: 10px 0 0;
+}
+
+/* サンプルデータのときだけ出る注意書き。見落とされては意味が無いので強めに出す。 */
+.notice {
+  margin: 12px 0 0;
+  padding: 9px 13px;
+  border: 1px solid var(--accent);
+  border-radius: 7px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: .78rem; font-weight: 700;
+  /* 文節ごとに .nb で括ってあるので、割れてほしくない位置では折れない */
+  word-break: keep-all; overflow-wrap: normal;
+}
+
+/* --- 集計 --- */
+.panel {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+  margin: 22px 0 8px;
+}
+/* 4枚で固定する。auto-fit だと最後の1枚だけ次の行に取り残されて見える。 */
+.summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background: var(--border);
+}
+@media (max-width: 620px) {
+  .summary { grid-template-columns: repeat(2, 1fr); }
+}
+.stat { background: var(--surface); padding: 13px 16px; }
+.stat-label {
+  font-size: .7rem; color: var(--muted); letter-spacing: .06em;
+  display: block; margin-bottom: 2px;
+  /* 「表示中の動画」が助詞で割れないようまとめて扱う */
+  white-space: nowrap;
+}
+.stat-value {
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 1.2rem; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+}
+.stat-value .unit { font-size: .72rem; font-weight: 400; color: var(--muted); margin-left: 3px; }
+
+/* --- カテゴリ別の内訳 --- */
+/* 棒にしておけば、カテゴリが何個あっても1行1本で並ぶので取り残しが出ない */
+.breakdown { padding: 14px 16px 16px; border-top: 1px solid var(--border); }
+.breakdown-title {
+  font-size: .7rem; color: var(--muted); letter-spacing: .06em;
+  margin: 0 0 10px; white-space: nowrap;
+}
+.bar-row {
+  display: grid;
+  grid-template-columns: 9.5em 1fr auto;
+  gap: 12px; align-items: center;
+}
+.bar-row + .bar-row { margin-top: 7px; }
+/* カテゴリ名は「・」で折る前提。1行の名前も2行の名前と同じ高さに揃えて、棒の並びを読みやすくする。 */
+.bar-name {
+  font-size: .74rem; line-height: 1.4;
+  min-height: 2.1em;
+  display: flex; flex-wrap: wrap; align-content: center;
+  word-break: keep-all; overflow-wrap: normal;
+}
+.bar-track { height: 6px; border-radius: 999px; background: var(--chip); overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 999px; background: var(--accent); }
+.bar-count {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .74rem; color: var(--muted);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+@media (max-width: 620px) {
+  /* 幅は変えない。変えると狭い画面だけ折り返し位置が変わってしまう */
+  .bar-row { gap: 9px; }
+}
+
+/* --- 操作バー --- */
+.controls {
+  position: sticky; top: 0; z-index: 10;
+  background: var(--bg);
+  padding: 12px 0 14px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.row + .row { margin-top: 8px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+select, input[type=search], .btn {
+  font: inherit; font-size: .82rem;
+  padding: 7px 11px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--ink);
+}
+input[type=search] { flex: 1; min-width: 200px; }
+.btn { cursor: pointer; white-space: nowrap; font-weight: 700; color: var(--accent); }
+.btn:hover { border-color: var(--accent); background: var(--accent-soft); }
+.chip {
+  display: inline-flex; align-items: baseline; gap: 6px;
+  font-size: .78rem; padding: 5px 13px;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: var(--surface); color: var(--muted);
+  cursor: pointer; user-select: none;
+  font-family: inherit; line-height: 1.6;
+}
+.chip:hover { border-color: var(--accent); color: var(--accent); }
+.chip.on {
+  background: var(--accent-soft); border-color: var(--accent);
+  color: var(--accent); font-weight: 700;
+}
+/* ジャンル名は途中で割らない。「ピラティス」を「ピラ」と「ティス」に分けない */
+.chip-name { white-space: nowrap; }
+/* まだ1件も無いチップ。押しても空振りするので、選べないことを見た目で示す。
+   消してしまうと、扱う範囲が狭まったように見えるため残す。 */
+.chip.pending {
+  opacity: .45;
+  border-style: dashed;
+}
+.chip.pending:hover { border-color: var(--border); color: var(--muted); }
+.chip-count {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .72rem; font-variant-numeric: tabular-nums;
+}
+/* どの行を押しているのか分かるようにする。行が増えると迷いやすい */
+.filter-label {
+  font-size: .7rem; color: var(--muted); letter-spacing: .04em;
+  white-space: nowrap; min-width: 4.5em;
+}
+.count {
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--muted); font-size: .76rem; margin: 0 0 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- カード --- */
+#list { display: flex; flex-direction: column; gap: 10px; }
+.card {
+  display: grid;
+  grid-template-columns: 176px 1fr;
+  gap: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid transparent;
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+/* 登録者数に対して大きく跳ねた動画は左端の色で一目で分かるようにする */
+.card.rising { border-left-color: var(--rising); background: var(--surface-2); }
+@media (max-width: 620px) {
+  .card { grid-template-columns: 1fr; gap: 10px; }
+}
+
+.thumb {
+  position: relative;
+  display: block;
+  aspect-ratio: 16 / 9;
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--chip);
+}
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* サムネイルが無いとき（モックデータ）の代わりの表示 */
+.thumb .noimg {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: .7rem; color: var(--muted); white-space: nowrap;
+}
+.thumb .dur {
+  position: absolute; right: 6px; bottom: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .68rem; font-variant-numeric: tabular-nums;
+  padding: 1px 5px; border-radius: 4px;
+  background: rgba(0, 0, 0, .74); color: #fff;
+}
+
+.card-head { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; margin-bottom: 6px; }
+.rank {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .74rem; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.badge {
+  white-space: nowrap;
+  font-size: .66rem; font-weight: 700; letter-spacing: .04em;
+  padding: 2px 8px; border-radius: 999px;
+  background: var(--chip); color: var(--muted);
+}
+.badge.short { background: var(--accent-soft); color: var(--accent); }
+.badge.hit { background: var(--rising-soft); color: var(--rising); }
+
+.title {
+  font-size: .94rem; font-weight: 700; line-height: 1.6;
+  margin: 0 0 6px;
+  /* 動画タイトルは外部の文字列なので、収まらないときだけ折る（単語の途中では割らない） */
+  word-break: normal; overflow-wrap: break-word; line-break: strict;
+}
+.title a { color: inherit; text-decoration: none; }
+.title a:hover { color: var(--accent); text-decoration: underline; }
+
+.channel { font-size: .78rem; color: var(--muted); margin: 0 0 8px; }
+.channel .name { color: var(--ink); font-weight: 700; }
+
+/* 指標の行。ラベルと数字が離れないよう1つずつ nowrap でまとめる。 */
+.metrics {
+  display: flex; flex-wrap: wrap; gap: 4px 14px;
+  font-size: .76rem; margin: 0 0 9px;
+}
+.metric { white-space: nowrap; color: var(--muted); }
+.metric b {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700; color: var(--ink);
+}
+.metric.vel b { color: var(--rising); }
+.metric.acc b { color: var(--accent); }
+
+.tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.tag {
+  white-space: nowrap;
+  font-size: .7rem; padding: 3px 9px; border-radius: 4px;
+  background: var(--chip); color: var(--muted);
+}
+/* 掛け合わせ語のタグ。主ジャンルと見分けが付くよう、枠線だけの見た目にする */
+.tag-mod {
+  background: transparent;
+  border: 1px solid var(--border);
+  padding: 2px 8px;
+}
+.link {
+  margin-left: auto; font-size: .76rem; color: var(--accent);
+  text-decoration: none; font-weight: 700; white-space: nowrap;
+}
+.link:hover { text-decoration: underline; }
+
+.empty { text-align: center; color: var(--muted); padding: 64px 20px; font-size: .88rem; }
+.empty.error { color: var(--accent); }

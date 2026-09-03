@@ -1,0 +1,3 @@
+# 収集スクリプトの依存パッケージ
+google-api-python-client>=2.100,<3
+PyYAML>=6.0,<7

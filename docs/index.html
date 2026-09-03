@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- 公開リポジトリで配信されるので、検索結果には出さない -->
+<meta name="robots" content="noindex, nofollow">
+<title>YouTube 美容トレンドリサーチ</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <header class="head">
+    <h1>YouTube <span class="nb">美容トレンド</span> <span class="nb">リサーチ</span></h1>
+    <p class="ver">直近90日に公開された美容系の動画から、いま伸びているものを並べています</p>
+    <p class="stamp" id="stamp">読み込み中…</p>
+  </header>
+
+  <section class="panel" aria-label="集計">
+    <div class="summary">
+      <div class="stat">
+        <span class="stat-label">表示中の動画</span>
+        <span class="stat-value"><span id="sum-shown">0</span><span class="unit">本</span></span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">収集した動画</span>
+        <span class="stat-value"><span id="sum-total">0</span><span class="unit">本</span></span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">チャンネル数</span>
+        <span class="stat-value"><span id="sum-channels">0</span><span class="unit">件</span></span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">ショート比率</span>
+        <span class="stat-value"><span id="sum-shorts">0</span><span class="unit">％</span></span>
+      </div>
+    </div>
+    <div class="breakdown">
+      <p class="breakdown-title">カテゴリ別の件数（表示中）</p>
+      <div id="breakdown"></div>
+    </div>
+  </section>
+
+  <div class="controls">
+    <div class="row">
+      <span class="filter-label">並び替え</span>
+      <select id="sort" aria-label="並び替え">
+        <option value="velocity">伸びの速さ</option>
+        <option value="acceleration">加速度（直近の伸び）</option>
+        <option value="views">再生数</option>
+        <option value="subRatio">登録者比</option>
+        <option value="newest">新着順</option>
+      </select>
+      <span class="filter-label">登録者数</span>
+      <select id="subs" aria-label="登録者数の上限">
+        <option value="0">制限なし</option>
+        <option value="10000">1万人以下</option>
+        <option value="50000">5万人以下</option>
+        <option value="100000">10万人以下</option>
+        <option value="500000">50万人以下</option>
+      </select>
+    </div>
+
+    <div class="row">
+      <span class="filter-label">公開日</span>
+      <div class="chips" id="period" role="group" aria-label="公開日で絞り込む"></div>
+    </div>
+
+    <div class="row">
+      <span class="filter-label">形式</span>
+      <div class="chips" id="format" role="group" aria-label="動画の形式で絞り込む"></div>
+    </div>
+
+    <div class="row">
+      <span class="filter-label">主ジャンル</span>
+      <div class="chips" id="categories" role="group" aria-label="主ジャンルで絞り込む"></div>
+    </div>
+
+    <div class="row">
+      <span class="filter-label">掛け合わせ</span>
+      <div class="chips" id="modifiers" role="group" aria-label="掛け合わせ語で絞り込む"></div>
+    </div>
+
+    <div class="row">
+      <input type="search" id="search" placeholder="タイトル・チャンネル名で検索" aria-label="フリーワード検索">
+      <button type="button" id="csv" class="btn">CSVで保存</button>
+    </div>
+  </div>
+
+  <p class="count" id="count"></p>
+  <div id="list"></div>
+
+</div>
+<script src="app.js"></script>
+</body>
+</html>
