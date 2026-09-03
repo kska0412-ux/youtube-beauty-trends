@@ -366,6 +366,59 @@ check('タグが文字列として表示される',
   dom3.window.document.querySelector('.title').textContent, evil.title);
 check('img要素は生成されない', dom3.window.document.querySelectorAll('.title img').length, 0);
 
+// --- 8. スマホ向けの絞り込み開閉 -------------------------------------------
+
+console.log('\n[8] 絞り込みの開閉とバッジ');
+
+// 構造：畳む対象がすべて filter-body の中にあること
+const body = $('#filter-body');
+check('絞り込みは filter-body にまとまっている',
+  ['#subs', '#period', '#categories', '#modifiers', '#search', '#csv']
+    .every((sel) => body.querySelector(sel) !== null), true);
+check('並び替えは畳まれない（常に押せる）', body.querySelector('#sort'), null);
+check('開閉ボタンは filter-body の外にある', body.querySelector('#filter-toggle'), null);
+
+// 開閉
+const controls = $('#controls');
+const toggle = $('#filter-toggle');
+check('初期状態は閉じている', controls.classList.contains('open'), false);
+check('初期の aria-expanded', toggle.getAttribute('aria-expanded'), 'false');
+check('開閉ボタンは filter-body を指している',
+  toggle.getAttribute('aria-controls'), 'filter-body');
+await click(toggle);
+check('押すと開く', controls.classList.contains('open'), true);
+check('開いたら aria-expanded も変わる', toggle.getAttribute('aria-expanded'), 'true');
+await click(toggle);
+check('もう一度押すと閉じる', controls.classList.contains('open'), false);
+
+// バッジ（畳んだままでも、いくつ絞り込んでいるか分かるように）
+const badge = $('#filter-badge');
+check('絞り込みが無ければバッジは出ない', badge.hidden, true);
+
+await click(chip('categories', 'ヘッドスパ'));
+check('主ジャンル1つでバッジ1', [badge.hidden, badge.textContent], [false, '1']);
+
+await click(chip('modifiers', '経営'));
+check('掛け合わせも足されてバッジ2', badge.textContent, '2');
+
+await select('#subs', '10000');
+check('登録者数の絞り込みも数える', badge.textContent, '3');
+
+await click(chip('period', '7日以内'));
+check('公開日を既定から変えたら数える', badge.textContent, '4');
+
+await type('サロン');
+check('フリーワードも数える', badge.textContent, '5');
+
+// すべて解除
+await type('');
+await click(chip('period', '90日以内'));
+await select('#subs', '0');
+await click(chip('modifiers', 'すべて'));
+await click(chip('categories', 'すべて'));
+check('全部解除するとバッジが消える', [badge.hidden, badge.textContent], [true, '0']);
+check('解除後は全件に戻る', cards().length, SHOWN_DEFAULT);
+
 // --- まとめ ---------------------------------------------------------------
 
 console.log(`\n${checks - failures}/${checks} 件が期待どおり`);

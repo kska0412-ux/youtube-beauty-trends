@@ -181,6 +181,9 @@ h1 {
 }
 
 /* --- 操作バー --- */
+/* hidden を付けた要素は、下でどんな display を当てても消えるようにする */
+[hidden] { display: none !important; }
+
 .controls {
   position: sticky; top: 0; z-index: 10;
   background: var(--bg);
@@ -190,6 +193,32 @@ h1 {
 }
 .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .row + .row { margin-top: 8px; }
+.filter-body > .row:first-child { margin-top: 8px; }
+
+/* 絞り込みの開閉ボタン。広い画面では全部並べられるので出さない。 */
+.filter-toggle {
+  display: none;
+  align-items: center; gap: 6px;
+  margin-left: auto;
+  font: inherit; font-size: .8rem; font-weight: 700;
+  padding: 7px 13px;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: var(--surface); color: var(--accent);
+  cursor: pointer;
+}
+.filter-toggle:hover { border-color: var(--accent); background: var(--accent-soft); }
+/* 開いているときは押された状態に見せる */
+.controls.open .filter-toggle {
+  background: var(--accent-soft); border-color: var(--accent);
+}
+/* いくつ絞り込んでいるか。畳んでいても効いている条件の数が分かるようにする。 */
+.filter-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 1.5em; height: 1.5em; padding: 0 .35em;
+  border-radius: 999px;
+  background: var(--accent); color: var(--surface);
+  font-size: .68rem; font-variant-numeric: tabular-nums;
+}
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 select, input[type=search], .btn {
   font: inherit; font-size: .82rem;
@@ -256,6 +285,34 @@ input[type=search] { flex: 1; min-width: 200px; }
 .card.rising { border-left-color: var(--rising); background: var(--surface-2); }
 @media (max-width: 620px) {
   .card { grid-template-columns: 1fr; gap: 10px; }
+}
+
+/* --- スマホ ---------------------------------------------------------------
+   絞り込みを全部並べると、操作バーだけで画面が埋まって一覧が見えなくなる。
+   既定では畳んでおき、「絞り込み」を押したときだけ開く。
+   開いた状態でも画面の6割までに収め、その中でスクロールさせる。 */
+@media (max-width: 620px) {
+  .controls { padding: 10px 0 10px; }
+  .filter-toggle { display: inline-flex; }
+  .filter-body { display: none; }
+  .controls.open .filter-body {
+    display: block;
+    margin-top: 4px;
+    max-height: 58vh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    /* スクロールの余地があることが分かるよう、下に余白を残す */
+    padding-bottom: 4px;
+  }
+
+  /* 畳んだ1行に収まるよう、部品を一回り小さくする */
+  .filter-label { min-width: 4em; font-size: .68rem; }
+  .filter-toggle { font-size: .76rem; padding: 6px 12px; }
+  .chip { font-size: .74rem; padding: 4px 11px; }
+  .chips { gap: 6px; }
+  select, input[type=search], .btn { font-size: .78rem; padding: 6px 10px; }
+  /* 200px 固定だと狭い画面で CSV ボタンが押し出される */
+  input[type=search] { min-width: 0; }
 }
 
 .thumb {

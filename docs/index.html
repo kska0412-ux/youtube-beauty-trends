@@ -42,8 +42,10 @@
     </div>
   </section>
 
-  <div class="controls">
-    <div class="row">
+  <div class="controls" id="controls">
+    <!-- スマホでは、この行だけ出して残りは畳む。
+         全部出すと操作バーだけで画面が埋まり、一覧が見えなくなるため。 -->
+    <div class="row row-main">
       <span class="filter-label">並び替え</span>
       <select id="sort" aria-label="並び替え">
         <option value="velocity">伸びの速さ</option>
@@ -52,34 +54,44 @@
         <option value="subRatio">登録者比</option>
         <option value="newest">新着順</option>
       </select>
-      <span class="filter-label">登録者数</span>
-      <select id="subs" aria-label="登録者数の上限">
-        <option value="0">制限なし</option>
-        <option value="10000">1万人以下</option>
-        <option value="50000">5万人以下</option>
-        <option value="100000">10万人以下</option>
-        <option value="500000">50万人以下</option>
-      </select>
+      <button type="button" class="filter-toggle" id="filter-toggle"
+              aria-expanded="false" aria-controls="filter-body">
+        <span class="nb">絞り込み</span>
+        <span class="filter-badge" id="filter-badge" hidden>0</span>
+      </button>
     </div>
 
-    <div class="row">
-      <span class="filter-label">公開日</span>
-      <div class="chips" id="period" role="group" aria-label="公開日で絞り込む"></div>
-    </div>
+    <div class="filter-body" id="filter-body">
+      <div class="row">
+        <span class="filter-label">登録者数</span>
+        <select id="subs" aria-label="登録者数の上限">
+          <option value="0">制限なし</option>
+          <option value="10000">1万人以下</option>
+          <option value="50000">5万人以下</option>
+          <option value="100000">10万人以下</option>
+          <option value="500000">50万人以下</option>
+        </select>
+      </div>
 
-    <div class="row">
-      <span class="filter-label">主ジャンル</span>
-      <div class="chips" id="categories" role="group" aria-label="主ジャンルで絞り込む"></div>
-    </div>
+      <div class="row">
+        <span class="filter-label">公開日</span>
+        <div class="chips" id="period" role="group" aria-label="公開日で絞り込む"></div>
+      </div>
 
-    <div class="row">
-      <span class="filter-label">掛け合わせ</span>
-      <div class="chips" id="modifiers" role="group" aria-label="掛け合わせ語で絞り込む"></div>
-    </div>
+      <div class="row">
+        <span class="filter-label">主ジャンル</span>
+        <div class="chips" id="categories" role="group" aria-label="主ジャンルで絞り込む"></div>
+      </div>
 
-    <div class="row">
-      <input type="search" id="search" placeholder="タイトル・チャンネル名で検索" aria-label="フリーワード検索">
-      <button type="button" id="csv" class="btn">CSVで保存</button>
+      <div class="row">
+        <span class="filter-label">掛け合わせ</span>
+        <div class="chips" id="modifiers" role="group" aria-label="掛け合わせ語で絞り込む"></div>
+      </div>
+
+      <div class="row">
+        <input type="search" id="search" placeholder="タイトル・チャンネル名で検索" aria-label="フリーワード検索">
+        <button type="button" id="csv" class="btn">CSVで保存</button>
+      </div>
     </div>
   </div>
 
