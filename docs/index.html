@@ -44,8 +44,6 @@
   </section>
 
   <div class="controls" id="controls">
-    <!-- スマホでは、この行だけ出して残りは畳む。
-         全部出すと操作バーだけで画面が埋まり、一覧が見えなくなるため。 -->
     <div class="row row-main">
       <span class="filter-label">並び替え</span>
       <select id="sort" aria-label="並び替え">
@@ -55,11 +53,6 @@
         <option value="subRatio">登録者比</option>
         <option value="newest">新着順</option>
       </select>
-      <button type="button" class="filter-toggle" id="filter-toggle"
-              aria-expanded="false" aria-controls="filter-body">
-        <span class="nb">絞り込み</span>
-        <span class="filter-badge" id="filter-badge" hidden>0</span>
-      </button>
     </div>
 
     <div class="filter-body" id="filter-body">

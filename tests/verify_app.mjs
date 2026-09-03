@@ -366,58 +366,34 @@ check('タグが文字列として表示される',
   dom3.window.document.querySelector('.title').textContent, evil.title);
 check('img要素は生成されない', dom3.window.document.querySelectorAll('.title img').length, 0);
 
-// --- 8. スマホ向けの絞り込み開閉 -------------------------------------------
+// --- 8. 絞り込みが隠れていないこと ----------------------------------------
 
-console.log('\n[8] 絞り込みの開閉とバッジ');
+console.log('\n[8] 絞り込みが常に見えていること');
 
-// 構造：畳む対象がすべて filter-body の中にあること
-const body = $('#filter-body');
-check('絞り込みは filter-body にまとまっている',
-  ['#subs', '#period', '#categories', '#modifiers', '#search', '#csv']
-    .every((sel) => body.querySelector(sel) !== null), true);
-check('並び替えは畳まれない（常に押せる）', body.querySelector('#sort'), null);
-check('開閉ボタンは filter-body の外にある', body.querySelector('#filter-toggle'), null);
+// スマホでは畳む案を一度入れたが、ジャンル別の件数が見えなくなって使いにくかった。
+// 隠す仕掛けを戻さないよう、ここで固定しておく。
+check('開閉ボタンは存在しない', $('#filter-toggle'), null);
+check('件数バッジは存在しない', $('#filter-badge'), null);
+check('controls に open 状態は無い', $('#controls').className.includes('open'), false);
 
-// 開閉
-const controls = $('#controls');
-const toggle = $('#filter-toggle');
-check('初期状態は閉じている', controls.classList.contains('open'), false);
-check('初期の aria-expanded', toggle.getAttribute('aria-expanded'), 'false');
-check('開閉ボタンは filter-body を指している',
-  toggle.getAttribute('aria-controls'), 'filter-body');
-await click(toggle);
-check('押すと開く', controls.classList.contains('open'), true);
-check('開いたら aria-expanded も変わる', toggle.getAttribute('aria-expanded'), 'true');
-await click(toggle);
-check('もう一度押すと閉じる', controls.classList.contains('open'), false);
+// 絞り込みの部品が全部そのまま DOM にあること
+check('絞り込みの部品が揃っている',
+  ['#sort', '#subs', '#period', '#categories', '#modifiers', '#search', '#csv']
+    .filter((sel) => $(sel) === null), []);
+check('主ジャンルのチップが全部出ている',
+  $$('#categories .chip').length, DATA.categories.length + 1);
+check('掛け合わせのチップが全部出ている',
+  $$('#modifiers .chip').length, DATA.modifiers.length + 1);
 
-// バッジ（畳んだままでも、いくつ絞り込んでいるか分かるように）
-const badge = $('#filter-badge');
-check('絞り込みが無ければバッジは出ない', badge.hidden, true);
+// チップに件数が出ていること（これが見えることが畳まない理由）
+check('主ジャンルのチップに件数が付いている',
+  $$('#categories .chip').filter((c) => c.dataset.name)
+    .every((c) => /^\d+$/.test(c.querySelector('.chip-count').textContent)), true);
 
-await click(chip('categories', 'ヘッドスパ'));
-check('主ジャンル1つでバッジ1', [badge.hidden, badge.textContent], [false, '1']);
-
-await click(chip('modifiers', '経営'));
-check('掛け合わせも足されてバッジ2', badge.textContent, '2');
-
-await select('#subs', '10000');
-check('登録者数の絞り込みも数える', badge.textContent, '3');
-
-await click(chip('period', '7日以内'));
-check('公開日を既定から変えたら数える', badge.textContent, '4');
-
-await type('サロン');
-check('フリーワードも数える', badge.textContent, '5');
-
-// すべて解除
-await type('');
-await click(chip('period', '90日以内'));
-await select('#subs', '0');
-await click(chip('modifiers', 'すべて'));
-await click(chip('categories', 'すべて'));
-check('全部解除するとバッジが消える', [badge.hidden, badge.textContent], [true, '0']);
-check('解除後は全件に戻る', cards().length, SHOWN_DEFAULT);
+// 隠す指定が紛れ込んでいないか（CSS の意図を明文化しておく）
+const css = readFileSync(join(DOCS, 'style.css'), 'utf8');
+check('スマホで controls を固定しない', css, (t) => /\.controls\s*\{[^}]*position:\s*static/.test(t));
+check('filter-body を display:none にしていない', css, (t) => !/\.filter-body\s*\{\s*display:\s*none/.test(t));
 
 // --- まとめ ---------------------------------------------------------------
 

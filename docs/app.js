@@ -286,23 +286,6 @@ function renderSummary(videos) {
   document.getElementById('sum-week').textContent = week.toLocaleString('ja-JP');
 }
 
-/**
- * いくつ絞り込みが効いているかを数えて、開閉ボタンのバッジに出す。
- * スマホでは絞り込みを畳んでいるので、畳んだままでも条件が効いていることが
- * 分かるようにしておかないと「なぜ件数が少ないのか」が読めなくなる。
- */
-function updateFilterBadge() {
-  const badge = document.getElementById('filter-badge');
-  if (!badge) return;
-  const active = state.categories.size
-    + state.modifiers.size
-    + (state.subsMax > 0 ? 1 : 0)
-    + (state.periodDays !== 90 ? 1 : 0)
-    + (state.query.trim() ? 1 : 0);
-  badge.textContent = String(active);
-  badge.hidden = active === 0;
-}
-
 function render() {
   const videos = sorted(filtered());
   const list = document.getElementById('list');
@@ -311,7 +294,6 @@ function render() {
   renderSummary(videos);
   renderBreakdown(videos);
   updateChipCounts();
-  updateFilterBadge();
 
   document.getElementById('count').textContent =
     videos.length + ' 件を表示中（収集 ' + allVideos.length + ' 件）';
@@ -523,14 +505,6 @@ function bindControls() {
   });
 
   document.getElementById('csv').addEventListener('click', downloadCsv);
-
-  // 絞り込みの開閉（スマホでだけボタンが出る）
-  const controls = document.getElementById('controls');
-  const toggle = document.getElementById('filter-toggle');
-  toggle.addEventListener('click', () => {
-    const open = controls.classList.toggle('open');
-    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-  });
 }
 
 function showError(message) {
