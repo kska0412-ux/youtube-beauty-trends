@@ -51,6 +51,19 @@ UNIT_LIST = 1
 # 1回の検索で受け取る件数の上限（API の最大値）
 SEARCH_PAGE_SIZE = 50
 
+# 検索結果の並べ方。
+#
+# 当初は viewCount（再生数順）にしていたが、実測で問題が出た。
+# 再生数順だと、世界共通の言葉のジャンルで英語圏の巨大チャンネルが50枠を
+# 占め切ってしまう。2026-09-03 の実測では「ピラティス」の50件中、日本語は
+# たった3件で、打ち切り位置が21.7万回だった（日本語の動画は大量にあるのに
+# 再生数で負けて1本も届かない）。100ユニット払って3件しか使えていない状態。
+#
+# relevance（関連度順）にすると、再生数ではなく語との関連で選ばれるので、
+# 日本語の動画が届きやすくなる。「伸びている動画」の判定は取得後に
+# velocity / acceleration で行うので、取得段階を再生数順にする必要はない。
+SEARCH_ORDER = "relevance"
+
 # videos.list / channels.list は1回に50件までまとめられる
 BATCH_SIZE = 50
 
@@ -268,7 +281,7 @@ def search_video_ids(youtube, keyword, published_after, tracker):
             type="video",
             regionCode="JP",
             relevanceLanguage="ja",
-            order="viewCount",
+            order=SEARCH_ORDER,
             publishedAfter=published_after,
             maxResults=SEARCH_PAGE_SIZE,
         ).execute()
@@ -848,6 +861,37 @@ def merge_with_existing(videos, existing, genres, modifiers):
     return list(by_id.values())
 
 
+def report_language(videos_before, videos_after, plan):
+    """
+    検索語ごとに「返ってきた件数」と「日本語だった件数」を出す。
+
+    order（検索結果の並べ方）を変えたときの効果を測るためのもの。
+    日本語率が低い語は、その100ユニットがほぼ無駄になっている。
+    """
+    by_query = {}
+    for record in videos_before:
+        japanese = is_japanese(record)
+        for query in record.get("matchedKeywords", []):
+            slot = by_query.setdefault(query, [0, 0])
+            slot[0] += 1
+            if japanese:
+                slot[1] += 1
+
+    print(f"\n検索語ごとの日本語率（order={SEARCH_ORDER}）:")
+    total, total_ja = 0, 0
+    for entry in plan:
+        query = entry["query"]
+        got, japanese = by_query.get(query, (0, 0))
+        total += got
+        total_ja += japanese
+        rate = f"{japanese / got * 100:>3.0f}%" if got else "  -"
+        flag = "   ← 日本語が少ない" if got >= 10 and japanese / got < 0.5 else ""
+        print(f"  {query:<28} {got:>3}件中 日本語 {japanese:>3}件 ({rate}){flag}")
+    if total:
+        print(f"  合計: {total}件中 日本語 {total_ja}件 ({total_ja / total * 100:.0f}%)")
+    print(f"  ふるい分け後に残った動画: {len(videos_after)}件")
+
+
 def refilter(genres, modifiers, required_any, exclude):
     """
     APIを呼ばずに、既存の videos.json へふるい分けだけを掛け直す。
@@ -904,6 +948,9 @@ def main():
                         help="APIを呼ばずサンプルデータを生成する（APIキー不要）")
     parser.add_argument("--limit", type=int, default=None,
                         help="検索するキーワード数の上限（試運転用）")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="収集して結果を表示するだけで保存しない"
+                             "（クォータは消費する。検索条件を変えた効果を測るとき用）")
     parser.add_argument("--refilter", action="store_true",
                         help="APIを呼ばず、既存の videos.json にふるい分けだけ掛け直す"
                              "（クォータを消費しない。キーワードを調整したときに使う）")
@@ -959,6 +1006,7 @@ def main():
     # ふるい分け。海外の動画と、キーワードには当たったが中身が別物の動画を落とす。
     if not args.mock:
         before = len(videos)
+        raw_videos = list(videos)
         videos, dropped, examples = apply_filters(videos, required_any, exclude)
         print(f"\nふるい分け: {before}件 → {len(videos)}件")
         for reason, count in dropped.items():
@@ -966,6 +1014,13 @@ def main():
                 print(f"  {reason}で除外: {count}件")
                 for line in examples[reason]:
                     print(f"      {line}")
+        if args.dry_run:
+            report_language(raw_videos, videos, selected)
+            print(tracker.summary())
+            print("\n--dry-run のため保存していません。"
+                  "既存の videos.json はそのままです。")
+            return 0
+
         if not videos:
             print("エラー: ふるい分けで全件が消えました。"
                   "keywords.yml の required_any / exclude を見直してください。", file=sys.stderr)

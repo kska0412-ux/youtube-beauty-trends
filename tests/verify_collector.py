@@ -27,6 +27,12 @@ JST = timezone(timedelta(hours=9))
 # 揃える先。Threads / Instagram 版と同じ構成であることを直接突き合わせる。
 THREADS_CONFIG = Path("/Users/kameda/Projects/threads-trend-collector/config/keywords.json")
 
+# Threads 版にはあるが YouTube 版では意図的に外したジャンル。
+# パーマネントジュエリー: 2026-09-03 の実測で90日以内の日本語動画が0件だった。
+#   単独検索50件は全て英語圏で、掛け合わせ2種は YouTube が1本も返さなかった。
+#   YouTube にまだ日本語の供給が無いため外している（keywords.yml に理由を記載）。
+INTENTIONALLY_DROPPED = {"パーマネントジュエリー"}
+
 checks = 0
 failures = 0
 
@@ -62,13 +68,15 @@ check("61秒はショートでない", 0 < collect.parse_duration("PT1M1S") <= c
 
 print("\n[3] keywords.yml の読み取り")
 genres, modifiers, required_any, exclude = collect.load_keywords()
-check("主ジャンル数", len(genres), 12)
+check("主ジャンル数", len(genres), 11)
 check("掛け合わせ語数", len(modifiers), 6)
 check("主ジャンルは1ジャンル1語", [len(v) for v in genres.values()], lambda v: set(v) == {1})
 check("主ジャンルの並び順", list(genres), [
-    "ヘッドスパ", "アートメイク", "パーマネントジュエリー", "リンパ",
+    "ヘッドスパ", "アートメイク", "リンパ",
     "セラピスト", "エステティシャン", "美容サロン", "オンライン秘書",
     "更年期ケア", "ピラティス", "鍼灸", "育毛"])
+check("意図的に外したジャンルは入っていない",
+      [g for g in INTENTIONALLY_DROPPED if g in genres], [])
 check("掛け合わせの並び順", list(modifiers),
       ["経営", "メニュー", "高単価", "単価UP", "スクール", "手技"])
 
@@ -89,11 +97,18 @@ check("あえて入れない語は入っていない", exclude,
 print("\n[4] Threads 版と同じ構成に揃っているか")
 if THREADS_CONFIG.exists():
     threads = json.loads(THREADS_CONFIG.read_text(encoding="utf-8"))
-    check("主ジャンルが一致（並び順まで）", list(genres), list(threads["genres"]))
+    expected_genres = [g for g in threads["genres"] if g not in INTENTIONALLY_DROPPED]
+    check("主ジャンルが一致（意図的に外した分を除く・並び順まで）",
+          list(genres), expected_genres)
     check("掛け合わせ語が一致（並び順まで）", list(modifiers), list(threads["modifiers"]))
     for name, spec in threads["modifiers"].items():
-        check(f"combine_with が一致: {name}", modifiers.get(name), spec["combine_with"])
+        expected = [g for g in spec["combine_with"] if g not in INTENTIONALLY_DROPPED]
+        check(f"combine_with が一致: {name}", modifiers.get(name), expected)
     for name, spec in threads["genres"].items():
+        if name in INTENTIONALLY_DROPPED:
+            check(f"外したジャンルの required_any も消えている: {name}",
+                  name in required_any, False)
+            continue
         check(f"required_any が一致: {name}", required_any.get(name), spec["required_any"])
 else:
     print(f"  -- Threads 版の設定が見つからないので照合を飛ばす: {THREADS_CONFIG}")
@@ -104,10 +119,10 @@ print("\n[5] 検索プランの組み立て")
 plan = collect.build_search_plan(genres, modifiers)
 combined = [e for e in plan if e["modifier"]]
 solo = [e for e in plan if not e["modifier"]]
-check("単独検索は主ジャンルの数だけ", len(solo), 12)
+check("単独検索は主ジャンルの数だけ", len(solo), 11)
 check("掛け合わせ検索は combine_with の合計", len(combined),
       sum(len(v) for v in modifiers.values()))
-check("検索回数の合計", len(plan), 53)
+check("検索回数の合計", len(plan), 49)
 check("主ジャンルが先、掛け合わせが後",
       [bool(e["modifier"]) for e in plan],
       lambda flags: flags == sorted(flags))
@@ -123,11 +138,14 @@ check("単独検索の語はジャンル名そのもの",
 bad_plan = collect.build_search_plan({"ヘッドスパ": ["ヘッドスパ"]}, {"経営": ["存在しないジャンル"]})
 check("知らないジャンルを指す掛け合わせは無視する", len(bad_plan), 1)
 
+# 検索結果の並べ方（再生数順だと英語圏の巨大チャンネルに枠を奪われる）
+check("検索は関連度順にする", collect.SEARCH_ORDER, "relevance")
+
 # --- 6. 日替わりローテーション --------------------------------------------
 
 print("\n[6] ローテーションが要るかどうか")
-check("53件は上限60以下なので1日で全部回る",
-      len(collect.select_keywords(plan, collect.MAX_SEARCH_CALLS, datetime.now(JST))), 53)
+check("49件は上限60以下なので1日で全部回る",
+      len(collect.select_keywords(plan, collect.MAX_SEARCH_CALLS, datetime.now(JST))), 49)
 check("ローテーションは発動しない",
       len(plan) <= collect.MAX_SEARCH_CALLS, True)
 
@@ -149,15 +167,15 @@ print("\n[7] クォータの数え方（最悪ケース）")
 tracker = collect.QuotaTracker()
 for _ in range(len(plan)):
     tracker.add_search()
-# 53回の検索 × 50件 = 2,650件。videos.list も channels.list も50件ずつなので53回ずつ。
+# 49回の検索 × 50件 = 2,450件。videos.list も channels.list も50件ずつなので49回ずつ。
 worst_list_calls = 2 * -(-len(plan) * collect.SEARCH_PAGE_SIZE // collect.BATCH_SIZE)
 for _ in range(worst_list_calls):
     tracker.add_list()
-check("検索の消費", len(plan) * collect.UNIT_SEARCH, 5300)
-check("詳細＋チャンネルの最悪回数", worst_list_calls, 106)
-check("1日の最悪消費ユニット", tracker.units, 5406)
+check("検索の消費", len(plan) * collect.UNIT_SEARCH, 4900)
+check("詳細＋チャンネルの最悪回数", worst_list_calls, 98)
+check("1日の最悪消費ユニット", tracker.units, 4998)
 check("1日上限10,000に収まる", tracker.units, lambda u: u < 10000)
-check("ログに概算が出る", tracker.summary(), lambda s: "5406" in s)
+check("ログに概算が出る", tracker.summary(), lambda s: "4998" in s)
 
 # --- 8. APIレスポンスの変換 -----------------------------------------------
 

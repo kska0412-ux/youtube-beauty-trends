@@ -64,7 +64,15 @@ YouTube の検索は空白がANDなので、組ませるだけで絞れる。
 ### API 呼び出し
 
 - `search.list`: `type=video`, `regionCode=JP`, `relevanceLanguage=ja`,
-  `order=viewCount`, `publishedAfter=現在-90日`, `maxResults=50`、1語1ページ
+  **`order=relevance`**, `publishedAfter=現在-90日`, `maxResults=50`、1語1ページ
+
+**`order` を `viewCount` から `relevance` に変えてある（当初仕様からの変更）。**
+再生数順だと、世界共通の言葉のジャンルで英語圏の巨大チャンネルが50枠を占め切る。
+2026-09-03 の実測では「ピラティス」の50件中、日本語はわずか3件で、打ち切り位置が
+21.7万回だった。日本語の動画は大量にあるのに再生数で負けて1本も届かない状態で、
+100ユニット払って3件しか使えていなかった。
+「伸びている動画」の判定は取得後に velocity / acceleration で行うので、
+取得段階を再生数順にする必要はない。`SEARCH_ORDER` で切り替えられる。
 - `videos.list`（`snippet,statistics,contentDetails`）で50件ずつ詳細取得
 - `channels.list`（`statistics`）で登録者数。同一チャンネルは1回だけ
 - 重複 videoId は統合し、ヒットした主ジャンル・掛け合わせ語・検索語を配列で保持
@@ -75,8 +83,8 @@ YouTube の検索は空白がANDなので、組ませるだけで絞れる。
 - `MAX_SEARCH_CALLS = 60`（6,000ユニット）を超えないこと。
   超える場合は日付ベースで日替わりローテーションし、翌日以降に回す
 - 実行ログに消費ユニット概算を必ず出す
-- **現在53語（主ジャンル12 + 掛け合わせ41）= 最悪 5,406ユニット/日**
-  （search 5,300 + videos.list 53 + channels.list 53）。60語以下なのでローテーションは発動しない
+- **現在49語（主ジャンル11 + 掛け合わせ38）= 最悪 4,998ユニット/日**
+  （search 4,900 + videos.list 49 + channels.list 49）。60語以下なのでローテーションは発動しない
 - 語を足すときは必ず先に試算する。60語を超えると、超えた分はその日集まらない
 - `HttpError 403 quotaExceeded` が出ても既存 `videos.json` を壊さない。
   部分的に取れた場合は既存データとマージして保存し、0件なら既存を残して終了する
@@ -110,12 +118,20 @@ YouTube の検索は空白がANDなので、組ませるだけで絞れる。
 
 ### 実測値（2026-09-03 初回収集）
 
+初回は `order=viewCount`・53語で収集した。その結果を分析して order と辞書を変えている。
+
 - 53語で **5,337ユニット**消費（試算の最悪5,406以内）
 - 1,246件取得 → ふるい分け後 **1,053件**
-- `パーマネントジュエリー` は**日本語の動画がほぼ無く0件**。検索すると YouTube が
-  英語の "permanent jewelry" を返す（50件中ほぼ全部が海外チャンネル）。
-  キーワードの問題ではなく供給の問題なので、語を変えるなら
-  「パーマネントジュエリー 施術」のように日本語の文脈語を足す方向で試すこと。
+- 単独検索50件のうち日本語だった数（`order=viewCount` 時）:
+  リンパ/セラピスト/エステティシャン/オンライン秘書/鍼灸 は 50/50、
+  ヘッドスパ・アートメイク 49/50、美容サロン 45/50、更年期ケア 40/50、育毛 32/50、
+  **ピラティス 3/50**、**パーマネントジュエリー 0/50**
+- `パーマネントジュエリー` は**辞書から外した**。90日以内の日本語動画が0件で、
+  単独検索50件は全て英語圏、掛け合わせ「高単価」「スクール」は YouTube が
+  1本も返さなかった（打ち切りではなく該当なし）。供給が無いジャンル。
+  復活させるときは keywords.yml の genres / required_any / modifiers の3か所に戻す。
+- `ピラティス` は供給不足ではなく `order=viewCount` の副作用だったため、
+  order の変更で対処した。効果は次回の収集で確認すること。
 
 ### 辞書を変えたときの古いカテゴリ名
 
@@ -169,7 +185,9 @@ YouTube の検索は空白がANDなので、組ませるだけで絞れる。
 ## 確認方法
 
 ```bash
-python3 collector/collect.py --mock   # サンプルデータ生成
+python3 collector/collect.py --mock      # サンプルデータ生成
+python3 collector/collect.py --dry-run   # 収集するが保存しない（検索条件の効果を測る）
+python3 collector/collect.py --refilter  # APIを呼ばずふるい分けだけ掛け直す（0ユニット）
 python3 tests/verify_collector.py     # 収集側 85項目
 node tests/verify_app.mjs             # 画面側 65項目
 python3 -m http.server 8000 --directory docs   # 目視確認
