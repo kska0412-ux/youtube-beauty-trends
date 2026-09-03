@@ -293,7 +293,6 @@ input[type=search] { flex: 1; min-width: 200px; }
   padding: 2px 8px; border-radius: 999px;
   background: var(--chip); color: var(--muted);
 }
-.badge.short { background: var(--accent-soft); color: var(--accent); }
 .badge.hit { background: var(--rising-soft); color: var(--rising); }
 
 .title {

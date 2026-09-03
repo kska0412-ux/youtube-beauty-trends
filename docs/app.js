@@ -14,7 +14,6 @@
 const state = {
   sort: 'velocity',
   periodDays: 90,
-  format: 'all',      // all | short | normal
   subsMax: 0,         // 0 は制限なし
   categories: new Set(),   // 主ジャンル。選んだものどうしは OR
   modifiers: new Set(),    // 掛け合わせ語。主ジャンルとは AND、語どうしは OR
@@ -33,12 +32,6 @@ const PERIODS = [
   { value: 7,  label: '7日以内' },
   { value: 30, label: '30日以内' },
   { value: 90, label: '90日以内' },
-];
-
-const FORMATS = [
-  { value: 'all',    label: '全て' },
-  { value: 'short',  label: 'ショート' },
-  { value: 'normal', label: '通常動画' },
 ];
 
 // --- 表示用の整形 ---------------------------------------------------------
@@ -93,9 +86,6 @@ function filtered() {
   return allVideos.filter((v) => {
     const age = daysSince(v.publishedAt);
     if (age === null || age > state.periodDays) return false;
-
-    if (state.format === 'short' && !v.isShort) return false;
-    if (state.format === 'normal' && v.isShort) return false;
 
     if (state.subsMax > 0 && (v.subscriberCount || 0) > state.subsMax) return false;
 
@@ -189,7 +179,6 @@ function buildCard(video, rank) {
 
   const head = el('div', 'card-head');
   head.appendChild(el('span', 'rank', '#' + rank));
-  if (video.isShort) head.appendChild(el('span', 'badge short', 'ショート'));
   if (s.subRatio >= RISING_SUB_RATIO) {
     head.appendChild(el('span', 'badge hit', '登録者の' + formatMetric(s.subRatio) + '倍'));
   }
@@ -286,12 +275,15 @@ function renderBreakdown(videos) {
 
 function renderSummary(videos) {
   const channels = new Set(videos.map((v) => v.channelId).filter(Boolean));
-  const shorts = videos.filter((v) => v.isShort).length;
+  // 直近7日に公開されたもの。いま出ている動画の量が一目で分かる。
+  const week = videos.filter((v) => {
+    const age = daysSince(v.publishedAt);
+    return age !== null && age <= 7;
+  }).length;
   document.getElementById('sum-shown').textContent = videos.length.toLocaleString('ja-JP');
   document.getElementById('sum-total').textContent = allVideos.length.toLocaleString('ja-JP');
   document.getElementById('sum-channels').textContent = channels.size.toLocaleString('ja-JP');
-  document.getElementById('sum-shorts').textContent =
-    videos.length ? Math.round(shorts / videos.length * 100) : 0;
+  document.getElementById('sum-week').textContent = week.toLocaleString('ja-JP');
 }
 
 function render() {
@@ -335,19 +327,6 @@ function buildPeriodChips() {
       render();
     });
     chip.dataset.period = String(p.value);
-    box.appendChild(chip);
-  });
-}
-
-function buildFormatChips() {
-  const box = document.getElementById('format');
-  FORMATS.forEach((f) => {
-    const chip = makeChip(f.label, () => {
-      state.format = f.value;
-      syncChipStates();
-      render();
-    });
-    chip.dataset.format = f.value;
     box.appendChild(chip);
   });
 }
@@ -437,9 +416,6 @@ function syncChipStates() {
   document.querySelectorAll('#period .chip').forEach((chip) => {
     chip.classList.toggle('on', Number(chip.dataset.period) === state.periodDays);
   });
-  document.querySelectorAll('#format .chip').forEach((chip) => {
-    chip.classList.toggle('on', chip.dataset.format === state.format);
-  });
 
   const active = { categories: state.categories, modifiers: state.modifiers };
   document.querySelectorAll('#categories .chip, #modifiers .chip').forEach((chip) => {
@@ -455,7 +431,7 @@ function syncChipStates() {
 
 const CSV_HEADERS = [
   '順位', 'タイトル', 'チャンネル名', '登録者数', '再生数', 'いいね数', 'コメント数',
-  '1日あたり再生数', '加速度(再生/日)', '登録者比', '公開日', '形式', '長さ(秒)',
+  '1日あたり再生数', '加速度(再生/日)', '登録者比', '公開日', '長さ(秒)',
   '主ジャンル', '掛け合わせ', 'ヒットしたキーワード', 'URL',
 ];
 
@@ -484,7 +460,6 @@ function downloadCsv() {
       s.acceleration === null || s.acceleration === undefined ? '' : s.acceleration,
       s.subRatio === undefined ? '' : s.subRatio,
       formatDate(v.publishedAt),
-      v.isShort ? 'ショート' : '通常動画',
       v.durationSec || 0,
       (v.categories || []).join(' / '),
       (v.modifiers || []).join(' / '),
@@ -541,7 +516,6 @@ function showError(message) {
 
 async function main() {
   buildPeriodChips();
-  buildFormatChips();
   bindControls();
 
   let payload;

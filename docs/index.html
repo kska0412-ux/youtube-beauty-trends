@@ -13,7 +13,7 @@
 
   <header class="head">
     <h1>YouTube <span class="nb">美容トレンド</span> <span class="nb">リサーチ</span></h1>
-    <p class="ver">直近90日に公開された美容系の動画から、いま伸びているものを並べています</p>
+    <p class="ver">直近90日に公開された美容系の動画から、いま伸びているものを並べています（ショートは除く）</p>
     <p class="stamp" id="stamp">読み込み中…</p>
   </header>
 
@@ -32,8 +32,8 @@
         <span class="stat-value"><span id="sum-channels">0</span><span class="unit">件</span></span>
       </div>
       <div class="stat">
-        <span class="stat-label">ショート比率</span>
-        <span class="stat-value"><span id="sum-shorts">0</span><span class="unit">％</span></span>
+        <span class="stat-label">7日以内の動画</span>
+        <span class="stat-value"><span id="sum-week">0</span><span class="unit">本</span></span>
       </div>
     </div>
     <div class="breakdown">
@@ -65,11 +65,6 @@
     <div class="row">
       <span class="filter-label">公開日</span>
       <div class="chips" id="period" role="group" aria-label="公開日で絞り込む"></div>
-    </div>
-
-    <div class="row">
-      <span class="filter-label">形式</span>
-      <div class="chips" id="format" role="group" aria-label="動画の形式で絞り込む"></div>
     </div>
 
     <div class="row">

@@ -67,11 +67,17 @@ SEARCH_ORDER = "relevance"
 # videos.list / channels.list は1回に50件までまとめられる
 BATCH_SIZE = 50
 
-# ショート動画とみなす長さの上限（秒）。
-# YouTube は2024年10月からショートを最長3分まで許しているが、API に
-# 「これはショート」という項目は無い。3分で切ると普通の短い動画まで
-# ショート扱いになるので、確実な60秒で線を引いている。
-# 60〜180秒のショートを拾いたい場合はこの値を 180 にする。
+# この秒数以下の動画はショートとみなして収集しない。
+#
+# YouTube API に「これはショート」という項目は無いので、長さで推定するしかない。
+# YouTube は2024年10月からショートを最長3分まで許しているため、60秒で切っても
+# 61〜180秒のショートは残る。ただし実測（2026-09-03・1,053件）では、その帯に
+# 「白髪手術」などの本物のサロンワーク動画も入っていた。普通の動画を誤って
+# 捨てる方が損なので、確実にショートと言える60秒で線を引いている。
+#
+# もっと厳しく落としたいときは 180 にする。実測での残り件数は次のとおり。
+#   60秒で切る … 1,053件 → 604件
+#   180秒で切る … 1,053件 → 359件
 SHORT_MAX_SEC = 60
 
 # history/ を残す日数。YouTube API の利用規約はデータの長期保持を制限しているため、
@@ -410,7 +416,6 @@ def build_record(video_id, item, subscriber_count, categories, modifiers, keywor
         "audioLanguage": snippet.get("defaultAudioLanguage")
         or snippet.get("defaultLanguage") or "",
         "durationSec": duration_sec,
-        "isShort": 0 < duration_sec <= SHORT_MAX_SEC,
         "thumbnail": thumb,
         "viewCount": _to_int(stats.get("viewCount")),
         "likeCount": _to_int(stats.get("likeCount")),
@@ -478,11 +483,17 @@ def excluded_word(record, exclude):
     return None
 
 
+def is_short(record):
+    """ショート動画とみなすか。長さでしか判定できない（SHORT_MAX_SEC の説明を参照）。"""
+    duration = record.get("durationSec") or 0
+    return 0 < duration <= SHORT_MAX_SEC
+
+
 def apply_filters(videos, required_any, exclude):
     """ふるいをかけ、(残った動画, 落とした理由ごとの件数, 落とした例) を返す。"""
     kept = []
-    dropped = {"海外": 0, "無関係": 0, "除外語": 0}
-    examples = {"海外": [], "無関係": [], "除外語": []}
+    dropped = {"ショート": 0, "海外": 0, "無関係": 0, "除外語": 0}
+    examples = {"ショート": [], "海外": [], "無関係": [], "除外語": []}
 
     def note(reason, record, detail=""):
         dropped[reason] += 1
@@ -490,6 +501,10 @@ def apply_filters(videos, required_any, exclude):
             examples[reason].append(f"{record['title'][:44]} | @{record['channelTitle'][:16]}{detail}")
 
     for record in videos:
+        # ショートは最初に落とす。以降の判定を通す意味が無いので。
+        if is_short(record):
+            note("ショート", record, f" ←{record.get('durationSec')}秒")
+            continue
         if not is_japanese(record):
             note("海外", record)
             continue
@@ -635,8 +650,9 @@ def generate_mock(plan, now, seed=20260903):
             # 本番の検索は「90日以内に公開」で絞るので、モックも同じ範囲に収める
             age_days = rng.uniform(0.5, PUBLISHED_WITHIN_DAYS - 0.5)
             published = now - timedelta(days=age_days)
-            duration = rng.choice([28, 45, 58, 214, 486, 733, 1180])
-            views = int(rng.randint(500, 400000) * (1.8 if duration <= SHORT_MAX_SEC else 1.0))
+            # ショートは収集しないので、モックも61秒以上だけ作る
+            duration = rng.choice([94, 132, 214, 486, 733, 1180])
+            views = rng.randint(500, 400000)
 
             by_id[video_id] = {
                 "videoId": video_id,
@@ -646,7 +662,6 @@ def generate_mock(plan, now, seed=20260903):
                 "subscriberCount": subscribers,
                 "publishedAt": published.isoformat(),
                 "durationSec": duration,
-                "isShort": duration <= SHORT_MAX_SEC,
                 # 外部への通信を増やさないよう、サムネイルは空にしてダミー枠を出す
                 "thumbnail": "",
                 "viewCount": views,
@@ -912,6 +927,9 @@ def refilter(genres, modifiers, required_any, exclude):
 
     # 辞書から消えたカテゴリ名もこの機会に落とす
     videos = drop_unknown_labels(videos, genres, modifiers)
+    # 収集をやめた項目が古いデータに残っていたら消す（ショートは収集しなくなった）
+    for record in videos:
+        record.pop("isShort", None)
     before = len(payload["videos"])
     videos, dropped, examples = apply_filters(videos, required_any, exclude)
 

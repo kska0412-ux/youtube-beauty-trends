@@ -156,6 +156,9 @@ check('集計：表示中', $('#sum-shown').textContent, SHOWN_DEFAULT.toLocaleS
 check('集計：収集数', $('#sum-total').textContent, DATA.videos.length.toLocaleString('ja-JP'));
 check('集計：チャンネル数', Number($('#sum-channels').textContent),
   new Set(DATA.videos.map((v) => v.channelId)).size);
+check('集計：7日以内の動画',
+  Number($('#sum-week').textContent.replace(/,/g, '')),
+  DATA.videos.filter((v) => (Date.now() - Date.parse(v.publishedAt)) / 86400000 <= 7).length);
 check('主ジャンル内訳の行数', $$('#breakdown .bar-row').length, DATA.categories.length);
 check('上段は主ジャンル12＋すべて', $$('#categories .chip').length, DATA.categories.length + 1);
 check('下段は掛け合わせ6＋すべて', $$('#modifiers .chip').length, DATA.modifiers.length + 1);
@@ -204,13 +207,11 @@ check('登録者1万人以下だけが残る', subsFiltered, (v) => v.length > 0
 check('母数より減っている', subsFiltered.length, (n) => n < SHOWN_DEFAULT);
 await select('#subs', '0');
 
-await click(chip('format', 'ショート'));
-check('ショートのみ', idsOf().map((id) => byId.get(id).isShort), (v) => v.length > 0 && v.every(Boolean));
-check('ショートバッジが全カードに付く', $$('.card .badge.short').length, cards().length);
-await click(chip('format', '通常動画'));
-check('通常動画のみ', idsOf().map((id) => byId.get(id).isShort), (v) => v.length > 0 && !v.some(Boolean));
-await click(chip('format', '全て'));
-check('形式リセットで全件に戻る', cards().length, SHOWN_DEFAULT);
+// ショートは収集していないので、形式の絞り込みそのものが無い
+check('形式の絞り込みは画面から消えている', $('#format'), null);
+check('ショートバッジは出ない', $$('.card .badge.short').length, 0);
+check('60秒以下の動画が混ざっていない',
+  DATA.videos.filter((v) => v.durationSec > 0 && v.durationSec <= 60).length, 0);
 
 await click(chip('period', '7日以内'));
 const now = Date.now();
@@ -330,6 +331,7 @@ check('BOM付き（Excelで文字化けしない）', (csvBlobText || '').charCo
 check('ヘッダー行', lines[0], (t) => t.startsWith('"順位","タイトル","チャンネル名"'));
 check('CSVに主ジャンルと掛け合わせの列がある', lines[0],
   (t) => t.includes('"主ジャンル","掛け合わせ"'));
+check('CSVに形式の列は無い', lines[0], (t) => !t.includes('"形式"'));
 check('行数＝絞り込み後の件数＋ヘッダー', lines.length, cards().length + 1);
 check('1行目にURLが入る', lines[1], (t) => t.includes('https://www.youtube.com/watch?v='));
 check('全セルがクォートされている', lines[1], (t) => /^"/.test(t) && /"$/.test(t));

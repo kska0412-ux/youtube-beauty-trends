@@ -60,9 +60,14 @@ check("空文字", collect.parse_duration(""), 0)
 check("None", collect.parse_duration(None), 0)
 check("壊れた値", collect.parse_duration("ZZZ"), 0)
 
-print("\n[2] ショート判定（60秒以下）")
-check("60秒はショート", 0 < collect.parse_duration("PT1M") <= collect.SHORT_MAX_SEC, True)
-check("61秒はショートでない", 0 < collect.parse_duration("PT1M1S") <= collect.SHORT_MAX_SEC, False)
+print("\n[2] ショート判定（60秒以下は収集しない）")
+sh = lambda d: collect.is_short({"durationSec": collect.parse_duration(d)})  # noqa: E731
+check("60秒はショート", sh("PT1M"), True)
+check("61秒はショートでない", sh("PT1M1S"), False)
+check("8秒はショート", sh("PT8S"), True)
+check("10分はショートでない", sh("PT10M"), False)
+check("長さ不明(0秒)はショート扱いしない", collect.is_short({"durationSec": 0}), False)
+check("しきい値は60秒", collect.SHORT_MAX_SEC, 60)
 
 # --- 3. キーワード辞書 ----------------------------------------------------
 
@@ -201,13 +206,13 @@ record = collect.build_record(
 
 check("スキーマの項目が揃っている", sorted(record.keys()), sorted([
     "videoId", "title", "channelId", "channelTitle", "subscriberCount", "publishedAt",
-    "durationSec", "isShort", "thumbnail", "viewCount", "likeCount", "commentCount",
+    "durationSec", "thumbnail", "viewCount", "likeCount", "commentCount",
     "categories", "modifiers", "matchedKeywords", "score", "collectedAt",
     # ふるい分けの判定根拠。あとで「なぜ残った/落ちた」を追えるように保存する
     "audioLanguage"]))
 check("言語の申告を拾う", record["audioLanguage"], "")
 check("再生数が数値になる", record["viewCount"], 120000)
-check("58秒はショート", record["isShort"], True)
+check("長さを秒で持つ", record["durationSec"], 58)
 check("サムネイルは medium を使う", record["thumbnail"], "https://i.ytimg.com/vi/abc/mqdefault.jpg")
 check("主ジャンルは配列でソート済み", record["categories"], ["セラピスト", "ヘッドスパ"])
 check("掛け合わせも配列で持つ", record["modifiers"], ["経営", "高単価"])
@@ -466,9 +471,10 @@ check("消費ユニット（検索4 + 詳細1 + チャンネル1）", run_tracke
 print("\n[14] ふるい分け")
 
 
-def rec(title, channel="ch", cats=("ヘッドスパ",), lang=""):
-    return {"title": title, "channelTitle": channel,
-            "categories": list(cats), "audioLanguage": lang}
+def rec(title, channel="ch", cats=("ヘッドスパ",), lang="", duration=300):
+    """テスト用の1件。長さは既定でショートに当たらない300秒にしておく。"""
+    return {"title": title, "channelTitle": channel, "categories": list(cats),
+            "audioLanguage": lang, "durationSec": duration}
 
 
 # 言語の判定
@@ -505,6 +511,21 @@ check("「コント」を除外語に入れていないので巻き込まない"
 check("ASMR は除外しない（本物のヘッドスパ動画のため）",
       collect.excluded_word(rec("【ASMR】極上ヘッドスパ"), exclude), None)
 
+# ショートは収集しない
+check("60秒以下はふるい分けで落とす",
+      collect.apply_filters([{"title": "ヘッドスパの施術", "channelTitle": "ch",
+                              "categories": ["ヘッドスパ"], "audioLanguage": "",
+                              "durationSec": 45}], required_any, exclude)[1]["ショート"], 1)
+check("61秒以上は残る",
+      len(collect.apply_filters([{"title": "ヘッドスパの施術", "channelTitle": "ch",
+                                  "categories": ["ヘッドスパ"], "audioLanguage": "",
+                                  "durationSec": 61}], required_any, exclude)[0]), 1)
+check("ショートは他の理由より先に判定する（短い海外動画はショート扱い）",
+      collect.apply_filters([{"title": "Pilates", "channelTitle": "Mark",
+                              "categories": ["ピラティス"], "audioLanguage": "en",
+                              "durationSec": 30}], required_any, exclude)[1],
+      lambda d: d["ショート"] == 1 and d["海外"] == 0)
+
 # まとめて適用したとき
 mixed = [
     rec("ヘッドスパで頭皮を整える"),                                    # 残る
@@ -515,7 +536,7 @@ mixed = [
 kept, dropped, examples = collect.apply_filters(mixed, required_any, exclude)
 check("残るのは1件", len(kept), 1)
 check("残った動画", kept[0]["title"], "ヘッドスパで頭皮を整える")
-check("落とした理由の内訳", dropped, {"海外": 1, "無関係": 1, "除外語": 1})
+check("落とした理由の内訳", dropped, {"ショート": 0, "海外": 1, "無関係": 1, "除外語": 1})
 check("落とした例に除外語が添えられる", examples["除外語"][0], lambda t: "クレヨンしんちゃん" in t)
 check("除外語は無関係より先に判定する（理由が正しく出る）",
       collect.apply_filters([rec("育毛剤 #クレヨンしんちゃん", "x", ("育毛",))],
