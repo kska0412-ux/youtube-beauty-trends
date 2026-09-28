@@ -15,8 +15,7 @@ const state = {
   sort: 'velocity',
   periodDays: 90,
   subsMax: 0,         // 0 は制限なし
-  categories: new Set(),   // 主ジャンル。選んだものどうしは OR
-  modifiers: new Set(),    // 掛け合わせ語。主ジャンルとは AND、語どうしは OR
+  // 検索窓の語。ジャンルのタブは廃止した（2026-09-28）。語で探す
   query: '',
 };
 
@@ -78,10 +77,87 @@ function formatDate(value) {
   return d.getFullYear() + '/' + (d.getMonth() + 1) + '/' + d.getDate();
 }
 
+// --- 検索語の読み方 -------------------------------------------------------
+//
+// ジャンルのタブは置かない。調べたい語を打つと、その語で伸びている動画が出る。
+// Threads / Instagram 版と同じ規則にしてある。
+//
+//   - 全角/半角と英字の大小はそろえる（「ＡＧＡ」でも「aga」でも当たる）
+//   - 空白・「×」「✕」「✖️」で区切った語はすべて含むもの（AND）
+//   - ジャンル名と同じ語は「そのジャンルで集めた動画」＋「タイトル・チャンネル名に
+//     その語を含む動画」。ジャンルの動画は収集時に関連度フィルタを通っているので、
+//     タイトルに語そのものが無くても話題は合っている
+//   - 掛け合わせ語（経営・メニューなど）も同じ。「エステティシャン 経営」で
+//     集めた動画が「経営」で当たる
+//   - ジャンル名はひらがな・カタカナの違いも吸収する（「しみ」でジャンル「シミ」）。
+//     ただしタイトルはジャンル名の表記で探す。「しみ」のまま探すと
+//     「楽しみ」「しみじみ」が大量に当たるため
+//   - 「ネイルサロン」は「ネイル」と「サロン」の掛け合わせとして読む。1語のまま探すと
+//     「ネイルサロン」と続けて書いたタイトルしか当たらないため。
+//     前半がジャンル名・掛け合わせ語のときだけ分ける（「エステサロン」はそのまま探す）
+
+const SALON = 'サロン';
+const SEP = /[\s×✕✖️]+/;
+let NAMED = {};   // かなを寄せた語 → { name, kind: 'genre' | 'mod' }
+
+function norm(t) {
+  let s = String(t || '');
+  if (s.normalize) s = s.normalize('NFKC');
+  return s.toLowerCase();
+}
+
+// ひらがなをカタカナに寄せる。ジャンル名との突き合わせにだけ使う
+function kana(t) {
+  return norm(t).replace(/[ぁ-ゖ]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 0x60));
+}
+
+function buildNamed() {
+  NAMED = {};
+  allCategories.forEach((g) => { NAMED[kana(g)] = { name: g, kind: 'genre' }; });
+  allModifiers.forEach((m) => {
+    if (!NAMED[kana(m)]) NAMED[kana(m)] = { name: m, kind: 'mod' };
+  });
+}
+
+function parseQuery(raw) {
+  const terms = [];
+  norm(raw).split(SEP).filter(Boolean).forEach((w) => {
+    const k = kana(w);
+    const hit = NAMED[k] || null;
+    if (!hit && k.length > SALON.length && k.endsWith(SALON)) {
+      const head = NAMED[k.slice(0, -SALON.length)] || null;
+      if (head) {
+        terms.push({ word: norm(head.name), named: head });
+        terms.push({ word: norm(SALON), named: null });
+        return;
+      }
+    }
+    // 「さろん」とひらがなで打っても、タイトルは「サロン」の表記で探す
+    if (!hit && k === SALON) {
+      terms.push({ word: norm(SALON), named: null });
+      return;
+    }
+    terms.push({ word: hit ? norm(hit.name) : w, named: hit });
+  });
+  return terms;
+}
+
+function matches(v, terms) {
+  if (!terms.length) return true;
+  if (v._hay === undefined) v._hay = norm((v.title || '') + ' ' + (v.channelTitle || ''));
+  return terms.every((t) => {
+    if (t.named) {
+      const pool = t.named.kind === 'genre' ? (v.categories || []) : (v.modifiers || []);
+      if (pool.includes(t.named.name)) return true;
+    }
+    return v._hay.includes(t.word);
+  });
+}
+
 // --- 絞り込みと並び替え ---------------------------------------------------
 
 function filtered() {
-  const q = state.query.trim().toLowerCase();
+  const terms = parseQuery(state.query);
 
   return allVideos.filter((v) => {
     const age = daysSince(v.publishedAt);
@@ -89,23 +165,7 @@ function filtered() {
 
     if (state.subsMax > 0 && (v.subscriberCount || 0) > state.subsMax) return false;
 
-    if (state.categories.size > 0) {
-      const cats = v.categories || [];
-      if (!cats.some((c) => state.categories.has(c))) return false;
-    }
-
-    // 掛け合わせは主ジャンルと AND。「エステティシャン」かつ「経営」を出すため。
-    // 掛け合わせ語どうしは OR（複数選ぶと候補が広がる）。
-    if (state.modifiers.size > 0) {
-      const mods = v.modifiers || [];
-      if (!mods.some((m) => state.modifiers.has(m))) return false;
-    }
-
-    if (q) {
-      const haystack = ((v.title || '') + ' ' + (v.channelTitle || '')).toLowerCase();
-      if (!haystack.includes(q)) return false;
-    }
-    return true;
+    return matches(v, terms);
   });
 }
 
@@ -221,7 +281,7 @@ function buildCard(video, rank) {
   body.appendChild(raw);
 
   const tags = el('div', 'tags');
-  // 上下2段のチップと同じ「主ジャンル＋掛け合わせ」を出す。
+  // どの語の収集で見つかったかを「主ジャンル＋掛け合わせ」で出す。
   // 検索語そのものを出すと「エステティシャン」と「エステティシャン 経営」が
   // 並んで冗長になるため、検索語は出さない。
   const cats = video.categories || [];
@@ -243,63 +303,49 @@ function buildCard(video, rank) {
   return card;
 }
 
-function renderBreakdown(videos) {
-  const box = document.getElementById('breakdown');
-  box.textContent = '';
-
-  const counts = new Map(allCategories.map((c) => [c, 0]));
-  videos.forEach((v) => {
-    (v.categories || []).forEach((c) => counts.set(c, (counts.get(c) || 0) + 1));
-  });
-  const max = Math.max(1, ...counts.values());
-
-  counts.forEach((count, name) => {
-    const row = el('div', 'bar-row');
-    // カテゴリ名は「・」の後ろでだけ折る。「小顔・リフトアップ」を「小顔・リフトア」で割らない。
-    const nameCell = el('div', 'bar-name');
-    name.split('・').forEach((part, i, arr) => {
-      nameCell.appendChild(el('span', 'nb', part + (i < arr.length - 1 ? '・' : '')));
-    });
-    row.appendChild(nameCell);
-
-    const track = el('div', 'bar-track');
-    const fill = el('div', 'bar-fill');
-    fill.style.width = (count / max * 100).toFixed(1) + '%';
-    track.appendChild(fill);
-    row.appendChild(track);
-
-    row.appendChild(el('div', 'bar-count', count + '本'));
-    box.appendChild(row);
-  });
+/** 文節を1かたまりずつ .nb で置く。途中で改行されず、助詞が行頭に来ない。 */
+function phrases(parent, list) {
+  list.forEach((t) => parent.appendChild(el('span', 'nb', t)));
+  return parent;
 }
 
-function renderSummary(videos) {
-  const channels = new Set(videos.map((v) => v.channelId).filter(Boolean));
-  // 直近7日に公開されたもの。いま出ている動画の量が一目で分かる。
-  const week = videos.filter((v) => {
-    const age = daysSince(v.publishedAt);
-    return age !== null && age <= 7;
-  }).length;
-  document.getElementById('sum-shown').textContent = videos.length.toLocaleString('ja-JP');
-  document.getElementById('sum-total').textContent = allVideos.length.toLocaleString('ja-JP');
-  document.getElementById('sum-channels').textContent = channels.size.toLocaleString('ja-JP');
-  document.getElementById('sum-week').textContent = week.toLocaleString('ja-JP');
+// 検索欄の下の一言。自前の文言なので文節ごとに .nb で括る
+function renderHint(terms) {
+  const hint = document.getElementById('hint');
+  hint.textContent = '';
+  if (!terms.length) {
+    phrases(hint, ['空欄のときは', '全ジャンルの', '伸びている動画を', '表示します。',
+                   '複数の語は', '空白で区切ると', 'すべて含む動画に', '絞れます。']);
+    return;
+  }
+  const named = terms.filter((t) => t.named).map((t) => '「' + t.named.name + '」');
+  const plain = terms.filter((t) => !t.named).map((t) => '「' + t.word + '」');
+  if (named.length && plain.length) {
+    // 「ネイルサロン」＝ネイルで集めた動画のうち、サロンも含むもの
+    phrases(hint, [named.join(''), 'で集めた動画と、', 'タイトルに', '語を含む動画のうち、',
+                   plain.join('') + 'も', '含むものを', '出しています。']);
+  } else if (named.length) {
+    phrases(hint, [named.join(''), 'で集めた動画と、', 'タイトルに', '語を含む動画を',
+                   '出しています。']);
+  } else {
+    phrases(hint, ['タイトルと', 'チャンネル名から', '探しています。']);
+  }
 }
 
 function render() {
+  renderHint(parseQuery(state.query));
   const videos = sorted(filtered());
   const list = document.getElementById('list');
   list.textContent = '';
-
-  renderSummary(videos);
-  renderBreakdown(videos);
-  updateChipCounts();
 
   document.getElementById('count').textContent =
     videos.length + ' 件を表示中（収集 ' + allVideos.length + ' 件）';
 
   if (videos.length === 0) {
-    list.appendChild(el('p', 'empty', '条件に合う動画がありません。絞り込みを緩めてみてください。'));
+    // 「別の語で」を1かたまりにして、「で」が行頭に来ないようにする
+    list.appendChild(phrases(el('p', 'empty'), [
+      '条件に合う動画が', 'ありません。', '別の語で', '検索するか、', '絞り込みを', '緩めてください。',
+    ]));
     return;
   }
 
@@ -331,100 +377,112 @@ function buildPeriodChips() {
   });
 }
 
-/**
- * 絞り込みチップの1段分を作る。上段（主ジャンル）と下段（掛け合わせ）で
- * 作りが同じなのでまとめてある。
- *
- * field は動画1件のどの配列を見るか（'categories' か 'modifiers'）。
- */
-function buildChipRow(boxId, names, active, field) {
-  const box = document.getElementById(boxId);
-  box.textContent = '';
-
-  const all = makeChip('すべて', () => {
-    active.clear();
-    syncChipStates();
-    render();
-  });
-  all.dataset.name = '';
-  all.dataset.field = field;
-  box.appendChild(all);
-
-  names.forEach((name) => {
-    const chip = makeChip(name, () => {
-      // 複数選択。押すたびに入り切りが変わる。
-      if (active.has(name)) active.delete(name);
-      else active.add(name);
-      syncChipStates();
-      render();
-    });
-    chip.dataset.name = name;
-    chip.dataset.field = field;
-    chip.appendChild(el('span', 'chip-count', ''));
-    box.appendChild(chip);
-  });
-}
-
-function buildFilterChips() {
-  buildChipRow('categories', allCategories, state.categories, 'categories');
-  buildChipRow('modifiers', allModifiers, state.modifiers, 'modifiers');
-}
-
-/**
- * チップの件数を数え直す。
- *
- * 自分の段の選択だけを外して数える。そうしないと、あるジャンルを選んだ瞬間に
- * 他のジャンルの件数が全部0になり、次にどれを押せるのか分からなくなる。
- * もう一方の段の選択は効かせたままにするので、上段で「ヘッドスパ」を選ぶと
- * 下段には「ヘッドスパの中で経営が何件か」が出る。
- */
-function countsFor(active, field) {
-  const saved = new Set(active);
-  active.clear();
-  const base = filtered();
-  saved.forEach((v) => active.add(v));
-
-  const counts = new Map();
-  base.forEach((v) => {
-    (v[field] || []).forEach((name) => counts.set(name, (counts.get(name) || 0) + 1));
-  });
-  return counts;
-}
-
-function updateChipCounts() {
-  const counts = {
-    categories: countsFor(state.categories, 'categories'),
-    modifiers: countsFor(state.modifiers, 'modifiers'),
-  };
-
-  document.querySelectorAll('#categories .chip, #modifiers .chip').forEach((chip) => {
-    const name = chip.dataset.name;
-    const countNode = chip.querySelector('.chip-count');
-    if (!name || !countNode) return;
-    const count = counts[chip.dataset.field].get(name) || 0;
-    countNode.textContent = String(count);
-    // 0件のチップは押しても空振りする。消さずに、選べないことを見た目で示す。
-    // 消してしまうと、扱う範囲が狭まったように見えるため。
-    const isEmpty = count === 0 && !chip.classList.contains('on');
-    chip.classList.toggle('pending', isEmpty);
-    chip.setAttribute('aria-disabled', isEmpty ? 'true' : 'false');
-    chip.title = isEmpty ? '該当する動画がまだありません' : '';
-  });
-}
-
 function syncChipStates() {
   document.querySelectorAll('#period .chip').forEach((chip) => {
-    chip.classList.toggle('on', Number(chip.dataset.period) === state.periodDays);
-  });
-
-  const active = { categories: state.categories, modifiers: state.modifiers };
-  document.querySelectorAll('#categories .chip, #modifiers .chip').forEach((chip) => {
-    const set = active[chip.dataset.field];
-    const name = chip.dataset.name;
-    const on = name ? set.has(name) : set.size === 0;
+    const on = Number(chip.dataset.period) === state.periodDays;
     chip.classList.toggle('on', on);
     chip.setAttribute('aria-pressed', on ? 'true' : 'false');
   });
+}
+
+// --- 入力候補 -------------------------------------------------------------
+// タブの代わりに、検索窓をタップしたとき収集ジャンルを一覧で見せる。
+// <datalist> は iPhone の Safari などで一覧が出ないので自前で組む。
+// 候補は打ちかけの最後の語で絞る（ひらがなでも当たる）。選ぶとその語に置き換える。
+// 各ジャンルのすぐ後ろに「◯◯サロン」も置く。こちらは何か打ちかけたときだけ出す
+// （空欄で全部出すと候補が倍の長さになり、目当てのジャンルを探しにくい）。
+
+let suggestItems = [];
+let activeIndex = -1;
+
+function buildSuggest() {
+  const box = document.getElementById('genre-suggest');
+  box.textContent = '';
+  suggestItems = [];
+  const add = (label, id, combo) => {
+    const li = el('li', 'suggest-item' + (combo ? ' combo' : ''), label);
+    li.setAttribute('role', 'option');
+    li.id = id;
+    li.dataset.genre = label;
+    li.dataset.key = kana(label);
+    if (combo) li.dataset.combo = '1';
+    box.appendChild(li);
+    suggestItems.push(li);
+  };
+  allCategories.forEach((g, i) => {
+    add(g, 'suggest-' + i, false);
+    // 「美容サロン」に「サロン」を重ねない
+    if (!kana(g).endsWith(SALON)) add(g + SALON, 'suggest-s' + i, true);
+  });
+}
+
+// 打ちかけの最後の語。「ネイル×サ」の「サ」のように、× の後ろも1語として見る
+function lastWord(v) {
+  const m = String(v).match(/(^|[\s×✕✖️])([^\s×✕✖️]*)$/);
+  return m ? m[2] : '';
+}
+
+function visibleItems() {
+  return suggestItems.filter((li) => !li.hidden);
+}
+
+function setActive(i) {
+  const input = document.getElementById('search');
+  const items = visibleItems();
+  suggestItems.forEach((li) => { li.classList.remove('active'); li.removeAttribute('aria-selected'); });
+  activeIndex = items.length ? Math.max(-1, Math.min(i, items.length - 1)) : -1;
+  if (activeIndex >= 0) {
+    const li = items[activeIndex];
+    li.classList.add('active');
+    li.setAttribute('aria-selected', 'true');
+    input.setAttribute('aria-activedescendant', li.id);
+    if (li.scrollIntoView) li.scrollIntoView({ block: 'nearest' });
+  } else {
+    input.removeAttribute('aria-activedescendant');
+  }
+}
+
+function openSuggest() {
+  const input = document.getElementById('search');
+  const box = document.getElementById('genre-suggest');
+  const key = kana(lastWord(input.value));
+  let shown = 0;
+  suggestItems.forEach((li) => {
+    const hit = key ? li.dataset.key.includes(key) : !li.dataset.combo;
+    li.hidden = !hit;
+    if (hit) shown += 1;
+  });
+  box.hidden = shown === 0;
+  input.setAttribute('aria-expanded', shown ? 'true' : 'false');
+  setActive(-1);
+}
+
+function closeSuggest() {
+  document.getElementById('genre-suggest').hidden = true;
+  document.getElementById('search').setAttribute('aria-expanded', 'false');
+  setActive(-1);
+}
+
+// --- URL の ?q= -------------------------------------------------------------
+// ?q= で開くと、その語で検索した状態から始まる。よく見る語をブックマークしておけるように
+
+function readUrlQuery() {
+  try {
+    return new URLSearchParams(window.location.search).get('q') || '';
+  } catch (e) {
+    return '';
+  }
+}
+
+function writeUrlQuery(value) {
+  try {
+    const url = new URL(window.location.href);
+    const v = String(value || '').trim();
+    if (v) url.searchParams.set('q', v); else url.searchParams.delete('q');
+    window.history.replaceState(null, '', url.toString());
+  } catch (e) {
+    // file:// などで書けなくても検索は続ける
+  }
 }
 
 // --- CSV ------------------------------------------------------------------
@@ -493,15 +551,83 @@ function bindControls() {
     render();
   });
 
+  const input = document.getElementById('search');
+  const box = document.getElementById('genre-suggest');
+
+  // 検索語を反映する。URL の ?q= も合わせて書き換える
+  const applyQuery = (value) => {
+    state.query = value;
+    render();
+    writeUrlQuery(value);
+  };
+
   let timer = null;
-  document.getElementById('search').addEventListener('input', (e) => {
-    // 1文字ごとに全件描き直すと重いので、入力が止まってから描く
+  input.addEventListener('input', (e) => {
+    // 候補はすぐ絞る。一覧は1文字ごとに全件描き直すと重いので、入力が止まってから描く
+    openSuggest();
     const value = e.target.value;
     clearTimeout(timer);
-    timer = setTimeout(() => {
-      state.query = value;
-      render();
-    }, 180);
+    timer = setTimeout(() => applyQuery(value), 180);
+  });
+
+  // 選んだジャンルで、打ちかけの最後の語を置き換えて検索する。
+  // スマホではキーボードを閉じて結果を見せる
+  const pickGenre = (label) => {
+    const v = input.value;
+    input.value = v.slice(0, v.length - lastWord(v).length) + label;
+    clearTimeout(timer);
+    closeSuggest();
+    applyQuery(input.value);
+    input.blur();
+  };
+
+  input.addEventListener('focus', openSuggest);
+  // アプリ内ブラウザでは、すでにフォーカスがある検索窓をもう一度タップしても
+  // focus が来ない（キーボードだけ閉じて開き直す）ことがある。タップでも開く
+  input.addEventListener('click', () => { if (box.hidden) openSuggest(); });
+  // 一覧の外をタップしたら閉じる
+  input.addEventListener('blur', closeSuggest);
+
+  // タップした瞬間に検索窓からフォーカスが外れると、先に一覧が閉じて
+  // 選べなくなる。押した時点ではフォーカスを動かさない
+  box.addEventListener('mousedown', (e) => e.preventDefault());
+  box.addEventListener('click', (e) => {
+    const li = e.target.closest ? e.target.closest('.suggest-item') : null;
+    if (li) pickGenre(li.dataset.genre);
+  });
+
+  // 日本語入力の変換を確定する Enter で、検索が走ってキーボードが閉じないようにする。
+  // isComposing だけでは Safari で確定直後の Enter を取りこぼすので、
+  // compositionend の直後も1拍だけ「変換中」とみなす
+  let composing = false;
+  input.addEventListener('compositionstart', () => { composing = true; });
+  input.addEventListener('compositionend', () => {
+    setTimeout(() => { composing = false; }, 0);
+  });
+
+  // PC では矢印キーで候補を選び、Enter で決める。Esc で閉じる
+  input.addEventListener('keydown', (e) => {
+    if (e.isComposing || composing) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (box.hidden) openSuggest();
+      e.preventDefault();
+      setActive(activeIndex + (e.key === 'ArrowDown' ? 1 : -1));
+    } else if (e.key === 'Enter' && activeIndex >= 0 && !box.hidden) {
+      e.preventDefault();
+      pickGenre(visibleItems()[activeIndex].dataset.genre);
+    } else if (e.key === 'Escape') {
+      closeSuggest();
+    }
+  });
+
+  // Enter や「検索」ボタンでページが再読み込みされないようにする
+  document.getElementById('search-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (composing) return;
+    clearTimeout(timer);
+    closeSuggest();
+    applyQuery(input.value);
+    input.blur();
   });
 
   document.getElementById('csv').addEventListener('click', downloadCsv);
@@ -511,7 +637,6 @@ function showError(message) {
   const list = document.getElementById('list');
   list.textContent = '';
   list.appendChild(el('p', 'empty error', message));
-  document.getElementById('stamp').textContent = '';
 }
 
 async function main() {
@@ -545,12 +670,17 @@ async function main() {
     document.querySelector('.head').appendChild(notice);
   }
 
-  const generated = parseDate(payload.generatedAt);
-  document.getElementById('stamp').textContent = generated
-    ? '最終更新 ' + generated.toLocaleString('ja-JP', { dateStyle: 'medium', timeStyle: 'short' })
-    : '最終更新 不明';
+  // 集計タイル・カテゴリ別の棒・最終更新の行は廃止した（2026-09-28）。
+  // 見出しのすぐ下に検索窓を置き、語で探す形にしている
+  buildNamed();
+  buildSuggest();
 
-  buildFilterChips();
+  const initial = readUrlQuery();
+  if (initial) {
+    document.getElementById('search').value = initial;
+    state.query = initial;
+  }
+
   syncChipStates();
   render();
 }

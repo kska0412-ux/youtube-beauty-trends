@@ -114,6 +114,7 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
 
 function chip(group, label) {
   const found = $$(`#${group} .chip`).find((c) => c.querySelector('.chip-name').textContent === label);
+  // 公開日のチップだけが残っている（ジャンルのチップは 2026-09-28 に廃止）
   if (!found) throw new Error(`チップが見つからない: ${group} / ${label}`);
   return found;
 }
@@ -149,23 +150,25 @@ console.log('\n[1] 初期表示');
 check('データの取得先が相対パスで解決されている', fetched, (f) => f.length === 1 && f[0] === 'data/videos.json');
 check('JSエラーが無い（カードが描かれている）', cards().length, (n) => n > 0);
 check('90日以内の動画が全て表示される', cards().length, SHOWN_DEFAULT);
-check('最終更新が表示されている', $('#stamp').textContent, (t) => /最終更新 \d/.test(t));
 check('件数表示', $('#count').textContent, (t) => t.includes(`${SHOWN_DEFAULT} 件を表示中`));
-// 画面は3桁区切りで出す（1053 → 1,053）。生の数字ではなく整形後と比べる。
-check('集計：表示中', $('#sum-shown').textContent, SHOWN_DEFAULT.toLocaleString('ja-JP'));
-check('集計：収集数', $('#sum-total').textContent, DATA.videos.length.toLocaleString('ja-JP'));
-check('集計：チャンネル数', Number($('#sum-channels').textContent),
-  new Set(DATA.videos.map((v) => v.channelId)).size);
-check('集計：7日以内の動画',
-  Number($('#sum-week').textContent.replace(/,/g, '')),
-  DATA.videos.filter((v) => (Date.now() - Date.parse(v.publishedAt)) / 86400000 <= 7).length);
-check('主ジャンル内訳の行数', $$('#breakdown .bar-row').length, DATA.categories.length);
-check('上段は主ジャンル12＋すべて', $$('#categories .chip').length, DATA.categories.length + 1);
-check('下段は掛け合わせ6＋すべて', $$('#modifiers .chip').length, DATA.modifiers.length + 1);
-check('主ジャンルの並びは辞書順',
-  $$('#categories .chip .chip-name').slice(1).map((n) => n.textContent), DATA.categories);
-check('掛け合わせの並びは辞書順',
-  $$('#modifiers .chip .chip-name').slice(1).map((n) => n.textContent), DATA.modifiers);
+// 集計タイル・カテゴリ別の棒・最終更新の行・ジャンルのチップは廃止した（2026-09-28）
+check('集計タイルが無い', $$('.summary, .stat, #sum-shown').length, 0);
+check('カテゴリ別の棒が無い', $$('#breakdown, .bar-row').length, 0);
+check('最終更新の行が無い', $('#stamp'), null);
+check('ジャンルのチップ列が無い', [$('#categories'), $('#modifiers')], [null, null]);
+check('見出しの次が検索窓', $('.head').nextElementSibling.id, 'controls');
+check('操作バーの先頭が検索窓', $('#controls').firstElementChild.id, 'search-form');
+// 候補（◯◯サロンを除く）は keywords.yml の順
+check('入力候補の並びは辞書順',
+  $$('#genre-suggest .suggest-item:not(.combo)').map((n) => n.textContent), DATA.categories);
+check('datalist を使っていない（iPhone の Safari などで一覧が出ない）',
+  [$('datalist'), $('#search').hasAttribute('list')], [null, false]);
+check('標準モードで描かれる（doctype あり）', doc.compatMode, 'CSS1Compat');
+check('キャッシュしない指定がある',
+  !!$('meta[http-equiv="Cache-Control"][content*="no-cache"]'), true);
+check('CSS と JS に版番号を付けている（アプリ内ブラウザに古い版を使わせない）',
+  [$('link[rel=stylesheet]').getAttribute('href'), $('script[src]').getAttribute('src')],
+  (v) => v.every((x) => /\?v=\d+/.test(x)));
 check('既定の並びは伸びの速さ',
   idsOf().map((id) => byId.get(id).score.velocity), (v) => isSorted(v, desc));
 check('カードにYouTubeリンクが新規タブで付く',
@@ -222,85 +225,117 @@ await click(chip('period', '30日以内'));
 check('30日以内は7日以内より多い', cards().length, (n) => n > ages.length);
 await click(chip('period', '90日以内'));
 
-await click(chip('categories', 'ヘッドスパ'));
-check('ヘッドスパだけ',
-  idsOf().every((id) => byId.get(id).categories.includes('ヘッドスパ')), true);
-const onlyHead = cards().length;
-await click(chip('categories', 'エステティシャン'));
-check('ヘッドスパ OR エステティシャン（上段どうしはOR）',
-  idsOf().every((id) => byId.get(id).categories
-    .some((c) => ['ヘッドスパ', 'エステティシャン'].includes(c))), true);
-check('2つ選ぶと件数が増える', cards().length, (n) => n > onlyHead);
-await click(chip('categories', 'エステティシャン'));
-check('もう一度押すと外れる', cards().length, onlyHead);
-await click(chip('categories', 'すべて'));
-check('「すべて」で解除', cards().length, SHOWN_DEFAULT);
+// --- 3b. 語で探す（ジャンルのタブの代わり）--------------------------------
 
-// --- 3b. 2段フィルタ（主ジャンル AND 掛け合わせ）-------------------------
+console.log('\n[3b] 語で探す');
+const inWindow = (v) => (Date.now() - Date.parse(v.publishedAt)) / 86400000 <= 90;
+const hay = (v) => ((v.title || '') + ' ' + (v.channelTitle || '')).normalize('NFKC').toLowerCase();
 
-console.log('\n[3b] 主ジャンルと掛け合わせの掛け算');
+// ジャンル名で探すと、そのジャンルで集めた動画＋タイトル・チャンネル名にその語を含む動画
+await type('ヘッドスパ');
+const wantHead = DATA.videos.filter((v) => inWindow(v)
+  && ((v.categories || []).includes('ヘッドスパ') || hay(v).includes('ヘッドスパ'))).length;
+check('ジャンル名でジャンル＋タイトル一致', cards().length, wantHead);
+check('全件より少ない', wantHead, (n) => n > 0 && n < SHOWN_DEFAULT);
+check('ヒントにジャンル名が出る', $('#hint').textContent, (t) => t.includes('「ヘッドスパ」で集めた動画'));
+await type('へっどすぱ');
+check('ひらがなでもジャンルに当たる', cards().length, wantHead);
 
-await click(chip('modifiers', '経営'));
-check('掛け合わせ単独でも絞れる',
-  idsOf().every((id) => (byId.get(id).modifiers || []).includes('経営')), true);
-const onlyKeiei = cards().length;
-check('全件より少ない', onlyKeiei, (n) => n > 0 && n < SHOWN_DEFAULT);
+// 掛け合わせ語（旧・下段のチップ）も語で探せる
+await type('経営');
+const wantKeiei = DATA.videos.filter((v) => inWindow(v)
+  && ((v.modifiers || []).includes('経営') || hay(v).includes('経営'))).length;
+check('掛け合わせ語でも絞れる', cards().length, wantKeiei);
 
-await click(chip('modifiers', 'スクール'));
-check('経営 OR スクール（下段どうしはOR）',
-  idsOf().every((id) => (byId.get(id).modifiers || [])
-    .some((m) => ['経営', 'スクール'].includes(m))), true);
-check('2つ選ぶと件数が増える', cards().length, (n) => n >= onlyKeiei);
-await click(chip('modifiers', 'スクール'));
+// 旧・上下段の AND は「ジャンル 掛け合わせ語」で表せる
+await type('エステティシャン 経営');
+const wantAnd = DATA.videos.filter((v) => inWindow(v)
+  && ((v.categories || []).includes('エステティシャン') || hay(v).includes('エステティシャン'))
+  && ((v.modifiers || []).includes('経営') || hay(v).includes('経営'))).length;
+check('空白区切りはAND（エステティシャン かつ 経営）', cards().length, wantAnd);
+check('ANDなのでどちらの単独よりも少ない', wantAnd, (n) => n > 0 && n <= wantKeiei);
+await type('エステティシャン　経営');
+check('全角空白でも区切れる', cards().length, wantAnd);
+check('カードに主ジャンルと掛け合わせのタグが出る（タグは見た目を分けている）',
+  $$('.card .tag-mod').length, (n) => n > 0);
 
-// ここが本題。上段と下段は AND。
-await click(chip('categories', 'エステティシャン'));
-check('エステティシャン かつ 経営（段をまたぐとAND）',
-  idsOf().every((id) => {
-    const v = byId.get(id);
-    return v.categories.includes('エステティシャン') && (v.modifiers || []).includes('経営');
-  }), true);
-const andCount = cards().length;
-check('ANDなのでどちらの単独よりも少ない', andCount, (n) => n > 0 && n < onlyKeiei);
-
-// 期待値を素のデータからも数えて突き合わせる
-const expectedAnd = DATA.videos.filter((v) =>
-  (Date.now() - Date.parse(v.publishedAt)) / 86400000 <= 90
-  && v.categories.includes('エステティシャン')
-  && (v.modifiers || []).includes('経営')).length;
-check('件数がデータから数えた値と一致', andCount, expectedAnd);
-check('カードに主ジャンルと掛け合わせの両方のタグが出る',
-  $$('.card').every((c) => {
-    const tags = Array.from(c.querySelectorAll('.tag')).map((t) => t.textContent);
-    return tags.includes('エステティシャン') && tags.includes('経営');
-  }), true);
-check('掛け合わせタグは見た目を分けている',
-  $$('.card')[0].querySelectorAll('.tag-mod').length, (n) => n > 0);
-
-await click(chip('categories', 'すべて'));
-await click(chip('modifiers', 'すべて'));
-check('両方解除で全件に戻る', cards().length, SHOWN_DEFAULT);
-
-// 0件のチップは押せないことを見た目で示す
-console.log('\n[3c] 0件のチップの扱い');
-await type('絶対に一致しない語zzz');
-check('0件でもチップは消えない', $$('#categories .chip').length, DATA.categories.length + 1);
-check('0件のチップに pending が付く',
-  $$('#categories .chip').filter((c) => c.dataset.name).every((c) => c.classList.contains('pending')),
-  true);
-check('pending チップは選べないと伝える',
-  $$('#categories .chip').find((c) => c.dataset.name).getAttribute('aria-disabled'), 'true');
+// 「◯◯サロン」「◯◯×サロン」は、ジャンルと「サロン」の掛け合わせとして読む
+const wantSalon = DATA.videos.filter((v) => inWindow(v)
+  && ((v.categories || []).includes('ヘッドスパ') || hay(v).includes('ヘッドスパ'))
+  && hay(v).includes('サロン')).length;
+const salonCounts = [];
+for (const q of ['ヘッドスパサロン', 'ヘッドスパ×サロン', 'ヘッドスパ✖️サロン', 'へっどすぱ さろん']) {
+  await type(q);
+  salonCounts.push(cards().length);
+}
+check('「ヘッドスパサロン」＝ヘッドスパ×サロン（書き方によらず同じ）', salonCounts,
+  (c) => c.every((n) => n === wantSalon));
+await type('ヘッドスパサロン');
+check('ヒントに「サロン」も含む旨が出る', $('#hint').textContent, (t) => t.includes('「サロン」も'));
+await type('エステサロン');
+check('前半がジャンル名でなければ分けずに探す', $('#hint').textContent,
+  (t) => t.includes('タイトルと') && !t.includes('で集めた'));
 await type('');
-// 検索を戻しても、実データで本当に0件のカテゴリは pending のまま残るのが正しい。
-// （例: パーマネントジュエリーは日本語の動画がほとんど無く0件になる）
-const emptyInData = DATA.categories.filter((c) =>
-  !DATA.videos.some((v) => (v.categories || []).includes(c)
-    && (Date.now() - Date.parse(v.publishedAt)) / 86400000 <= 90));
-const pendingNow = $$('#categories .chip')
-  .filter((c) => c.dataset.name && c.classList.contains('pending'))
-  .map((c) => c.dataset.name);
-check('検索を戻すと、本当に0件のカテゴリだけ pending が残る',
-  pendingNow.sort(), emptyInData.slice().sort());
+check('空欄に戻すと全件', cards().length, SHOWN_DEFAULT);
+check('空欄のヒントは全ジャンルの案内', $('#hint').textContent, (t) => t.includes('全ジャンル'));
+
+// --- 3c. 入力候補 ---------------------------------------------------------
+
+console.log('\n[3c] 入力候補（スマホでも出る自前の一覧）');
+const box = $('#genre-suggest');
+const input = $('#search');
+const shown = () => $$('#genre-suggest .suggest-item').filter((li) => !li.hidden).map((li) => li.textContent);
+input.dispatchEvent(new window.Event('blur'));
+check('フォーカスが無ければ閉じている', box.hidden, true);
+input.dispatchEvent(new window.Event('focus'));
+check('タップ（フォーカス）で開く', [box.hidden, input.getAttribute('aria-expanded')], [false, 'true']);
+check('空欄なら全ジャンル（◯◯サロンは出さない）', shown(), DATA.categories);
+input.value = 'へっど';
+input.dispatchEvent(new window.Event('input', { bubbles: true }));
+check('打ちかけの語で絞る（ひらがなでも当たる。◯◯サロンも出る）', shown(), ['ヘッドスパ', 'ヘッドスパサロン']);
+input.value = 'ざざざ';
+input.dispatchEvent(new window.Event('input', { bubbles: true }));
+check('当たる候補が無ければ閉じる', box.hidden, true);
+input.value = '経営×へっど';
+input.dispatchEvent(new window.Event('input', { bubbles: true }));
+check('「×」の後ろの語で絞る', shown(), ['ヘッドスパ', 'ヘッドスパサロン']);
+const item = $$('#genre-suggest .suggest-item').find((li) => li.textContent === 'ヘッドスパサロン');
+const md = new window.MouseEvent('mousedown', { bubbles: true, cancelable: true });
+item.dispatchEvent(md);
+check('押した瞬間はフォーカスを動かさない', md.defaultPrevented, true);
+await click(item);
+check('選ぶと最後の語が置き換わる', input.value, '経営×ヘッドスパサロン');
+check('選ぶと閉じる', box.hidden, true);
+check('選ぶとすぐ検索が効く（待たない）', $('#hint').textContent, (t) => t.includes('「経営」「ヘッドスパ」'));
+check('URL の ?q= も変わる', new window.URL(window.location.href).searchParams.get('q'), '経営×ヘッドスパサロン');
+input.dispatchEvent(new window.Event('blur'));
+await click(input);
+check('タップだけでも開く（アプリ内ブラウザ対策）', box.hidden, false);
+input.dispatchEvent(new window.Event('blur'));
+// キーボード操作（PC）
+await type('');
+input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+const ent = new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+input.dispatchEvent(ent);
+check('↓とEnterで先頭の候補に決まる', [input.value, ent.defaultPrevented], [DATA.categories[0], true]);
+input.dispatchEvent(new window.Event('focus'));
+input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+check('Escで閉じる', box.hidden, true);
+// 変換中の Enter では候補を決めない
+input.value = '';
+input.dispatchEvent(new window.Event('input', { bubbles: true }));
+input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, isComposing: true }));
+check('変換確定のEnterでは決めない', input.value, '');
+// 「検索」ボタン/Enter でページが再読み込みされない
+input.value = 'ヘッドスパ';
+const sub = new window.Event('submit', { bubbles: true, cancelable: true });
+$('#search-form').dispatchEvent(sub);
+await settle();
+check('送信してもページ遷移しない', sub.defaultPrevented, true);
+check('送信するとすぐ検索が効く', cards().length, wantHead);
+await type('');
+input.dispatchEvent(new window.Event('blur'));
 
 // --- 4. 検索 --------------------------------------------------------------
 
@@ -318,13 +353,15 @@ check(`タイトル「${word}」で絞れる`, cardTitles().every((t) => t.inclu
 await type('zzz該当なしzzz');
 check('該当なしのとき0件', cards().length, 0);
 check('空状態の案内が出る', $('.empty').textContent, (t) => t.includes('条件に合う動画がありません'));
+check('空状態の案内は文節ごとに括られている',
+  $$('.empty .nb').map((n) => n.textContent).join(''), $('.empty').textContent);
 await type('');
 check('検索クリアで全件に戻る', cards().length, SHOWN_DEFAULT);
 
 // --- 5. CSV ---------------------------------------------------------------
 
 console.log('\n[5] CSVダウンロード');
-await click(chip('categories', 'ヘッドスパ'));
+await type('ヘッドスパ');
 await click($('#csv'));
 const lines = (csvBlobText || '').replace(/^﻿/, '').trim().split('\r\n');
 check('BOM付き（Excelで文字化けしない）', (csvBlobText || '').charCodeAt(0), 0xfeff);
@@ -335,7 +372,7 @@ check('CSVに形式の列は無い', lines[0], (t) => !t.includes('"形式"'));
 check('行数＝絞り込み後の件数＋ヘッダー', lines.length, cards().length + 1);
 check('1行目にURLが入る', lines[1], (t) => t.includes('https://www.youtube.com/watch?v='));
 check('全セルがクォートされている', lines[1], (t) => /^"/.test(t) && /"$/.test(t));
-await click(chip('categories', 'すべて'));
+await type('');
 
 // --- 6. データが空のとき --------------------------------------------------
 
@@ -378,17 +415,8 @@ check('controls に open 状態は無い', $('#controls').className.includes('op
 
 // 絞り込みの部品が全部そのまま DOM にあること
 check('絞り込みの部品が揃っている',
-  ['#sort', '#subs', '#period', '#categories', '#modifiers', '#search', '#csv']
+  ['#sort', '#subs', '#period', '#search', '#genre-suggest', '#csv']
     .filter((sel) => $(sel) === null), []);
-check('主ジャンルのチップが全部出ている',
-  $$('#categories .chip').length, DATA.categories.length + 1);
-check('掛け合わせのチップが全部出ている',
-  $$('#modifiers .chip').length, DATA.modifiers.length + 1);
-
-// チップに件数が出ていること（これが見えることが畳まない理由）
-check('主ジャンルのチップに件数が付いている',
-  $$('#categories .chip').filter((c) => c.dataset.name)
-    .every((c) => /^\d+$/.test(c.querySelector('.chip-count').textContent)), true);
 
 // 隠す指定が紛れ込んでいないか（CSS の意図を明文化しておく）
 const css = readFileSync(join(DOCS, 'style.css'), 'utf8');

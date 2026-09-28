@@ -76,7 +76,6 @@ body {
 .nb { white-space: nowrap; }
 
 /* --- 見出し --- */
-.head { margin-bottom: 4px; }
 h1 {
   font-family: "Hiragino Mincho ProN", "Yu Mincho", "YuMincho", serif;
   font-weight: 700;
@@ -94,13 +93,6 @@ h1 {
   margin: 8px 0 0;
   line-height: 1.7;
 }
-.stamp {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: .7rem;
-  color: var(--muted);
-  margin: 10px 0 0;
-}
-
 /* サンプルデータのときだけ出る注意書き。見落とされては意味が無いので強めに出す。 */
 .notice {
   margin: 12px 0 0;
@@ -114,71 +106,8 @@ h1 {
   word-break: keep-all; overflow-wrap: normal;
 }
 
-/* --- 集計 --- */
-.panel {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  overflow: hidden;
-  background: var(--surface);
-  margin: 22px 0 8px;
-}
-/* 4枚で固定する。auto-fit だと最後の1枚だけ次の行に取り残されて見える。 */
-.summary {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 1px;
-  background: var(--border);
-}
-@media (max-width: 620px) {
-  .summary { grid-template-columns: repeat(2, 1fr); }
-}
-.stat { background: var(--surface); padding: 13px 16px; }
-.stat-label {
-  font-size: .7rem; color: var(--muted); letter-spacing: .06em;
-  display: block; margin-bottom: 2px;
-  /* 「表示中の動画」が助詞で割れないようまとめて扱う */
-  white-space: nowrap;
-}
-.stat-value {
-  white-space: nowrap;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 1.2rem; font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.3;
-}
-.stat-value .unit { font-size: .72rem; font-weight: 400; color: var(--muted); margin-left: 3px; }
-
-/* --- カテゴリ別の内訳 --- */
-/* 棒にしておけば、カテゴリが何個あっても1行1本で並ぶので取り残しが出ない */
-.breakdown { padding: 14px 16px 16px; border-top: 1px solid var(--border); }
-.breakdown-title {
-  font-size: .7rem; color: var(--muted); letter-spacing: .06em;
-  margin: 0 0 10px; white-space: nowrap;
-}
-.bar-row {
-  display: grid;
-  grid-template-columns: 9.5em 1fr auto;
-  gap: 12px; align-items: center;
-}
-.bar-row + .bar-row { margin-top: 7px; }
-/* カテゴリ名は「・」で折る前提。1行の名前も2行の名前と同じ高さに揃えて、棒の並びを読みやすくする。 */
-.bar-name {
-  font-size: .74rem; line-height: 1.4;
-  min-height: 2.1em;
-  display: flex; flex-wrap: wrap; align-content: center;
-  word-break: keep-all; overflow-wrap: normal;
-}
-.bar-track { height: 6px; border-radius: 999px; background: var(--chip); overflow: hidden; }
-.bar-fill { height: 100%; border-radius: 999px; background: var(--accent); }
-.bar-count {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: .74rem; color: var(--muted);
-  font-variant-numeric: tabular-nums; white-space: nowrap;
-}
-@media (max-width: 620px) {
-  /* 幅は変えない。変えると狭い画面だけ折り返し位置が変わってしまう */
-  .bar-row { gap: 9px; }
-}
+/* 集計タイル・カテゴリ別の棒・最終更新の行は廃止した。見出しのすぐ下に検索窓を置く */
+.head { margin-bottom: 20px; }
 
 /* --- 操作バー --- */
 /* hidden を付けた要素は、下でどんな display を当てても消えるようにする */
@@ -193,7 +122,7 @@ h1 {
 }
 .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .row + .row { margin-top: 8px; }
-.filter-body > .row:first-child { margin-top: 8px; }
+.hint + .row { margin-top: 10px; }
 
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 select, input[type=search], .btn {
@@ -204,7 +133,50 @@ select, input[type=search], .btn {
   background: var(--surface);
   color: var(--ink);
 }
-input[type=search] { flex: 1; min-width: 200px; }
+/* 検索窓がこのページの主役。ジャンルのタブは置かず、調べたい語を打って探す */
+.search-row { flex-wrap: nowrap; }
+/* 候補の一覧を検索窓の真下に重ねるための枠 */
+.search-box { position: relative; flex: 1; min-width: 0; display: flex; }
+input[type=search] {
+  flex: 1; min-width: 0; width: 100%;
+  font-size: 1rem;
+  padding: 11px 14px;
+  border-width: 1.5px;
+  border-color: var(--accent);
+  border-radius: 10px;
+}
+.search-btn {
+  font: inherit; font-size: .88rem; font-weight: 700;
+  padding: 11px 18px;
+  border: 0; border-radius: 10px;
+  background: var(--accent); color: var(--surface);
+  cursor: pointer; white-space: nowrap;
+}
+/* 収集ジャンルの候補。<datalist> は iPhone の Safari などで一覧が出ないので、
+   自前で組んで検索窓の下に重ねる。どの端末でもタップで選べる */
+.suggest {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 30;
+  margin: 0; padding: 4px 0; list-style: none;
+  /* min() を読めない古いアプリ内ブラウザ向けに、先に固定値を置く */
+  max-height: 320px;
+  max-height: min(50vh, 320px); overflow-y: auto;
+  -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+  background: var(--surface);
+  border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .14);
+}
+.suggest-item {
+  /* ジャンル名は途中で割らない */
+  white-space: nowrap;
+  font-size: .92rem; line-height: 1.4;
+  padding: 11px 14px;
+  cursor: pointer;
+}
+.suggest-item:hover, .suggest-item.active { background: var(--accent-soft); color: var(--accent); }
+.hint {
+  font-size: .74rem; color: var(--muted);
+  margin: 8px 0 0; line-height: 1.6;
+}
 .btn { cursor: pointer; white-space: nowrap; font-weight: 700; color: var(--accent); }
 .btn:hover { border-color: var(--accent); background: var(--accent-soft); }
 .chip {
@@ -229,10 +201,6 @@ input[type=search] { flex: 1; min-width: 200px; }
   border-style: dashed;
 }
 .chip.pending:hover { border-color: var(--border); color: var(--muted); }
-.chip-count {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: .72rem; font-variant-numeric: tabular-nums;
-}
 /* どの行を押しているのか分かるようにする。行が増えると迷いやすい */
 .filter-label {
   font-size: .7rem; color: var(--muted); letter-spacing: .04em;
@@ -264,10 +232,9 @@ input[type=search] { flex: 1; min-width: 200px; }
 }
 
 /* --- スマホ ---------------------------------------------------------------
-   絞り込みは畳まず、全部出したままにする。ジャンル別の件数が一目で分かることに
-   価値があるため、隠さない。
+   絞り込みは畳まず、全部出したままにする。
 
-   代わりに画面上部への固定（sticky）をやめる。固定したままだと、チップが
+   画面上部への固定（sticky）はやめる。固定したままだと、操作バーが
    折り返して増えるほど固定領域が広がり、一覧が見えなくなるため。
    固定を外せば、一度スクロールして通り過ぎたあとは一覧が全画面で読める。 */
 @media (max-width: 620px) {
@@ -281,9 +248,8 @@ input[type=search] { flex: 1; min-width: 200px; }
   .chip { font-size: .74rem; padding: 4px 11px; }
   .chips { gap: 6px; }
   .row + .row { margin-top: 7px; }
-  select, input[type=search], .btn { font-size: .78rem; padding: 6px 10px; }
-  /* 200px 固定だと狭い画面で CSV ボタンが押し出される */
-  input[type=search] { min-width: 0; }
+  select, .btn { font-size: .78rem; padding: 6px 10px; }
+  /* 検索窓は小さくしない。iPhone は16px未満の入力欄をタップすると画面を拡大してしまう */
 }
 
 .thumb {

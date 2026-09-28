@@ -27,7 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from scoring import build_score  # noqa: E402
+from scoring import build_score, parse_iso8601  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
 
@@ -861,17 +861,43 @@ def drop_unknown_labels(videos, genres, modifiers):
     return kept
 
 
-def merge_with_existing(videos, existing, genres, modifiers):
+def merge_with_existing(videos, existing, genres, modifiers, now=None):
     """
-    クォータ切れで一部しか取れなかったとき、既存の動画を失わないように混ぜる。
+    今回取れなかった既存の動画を失わないように混ぜる。使う場面は2つ。
+      - クォータ切れで一部しか取れなかったとき
+      - 日替わりローテーションで、今日は検索しなかった語があるとき
+        （混ぜないと、その語の動画がページから丸1日消える）
 
     今回取れた分を優先し、今回取れなかった既存の動画はそのまま残す。
-    ただし持ち越す側は、辞書から消えたカテゴリ名を落としてから混ぜる。
+    持ち越す側は、辞書から消えたカテゴリ名を落としてから混ぜる。
+
+    同じ動画が前回は「ネイル」、今回は「ジェルネイル」で当たったときは、
+    カテゴリ・掛け合わせ・検索語を合わせる。今回の分で上書きすると、
+    今日検索しなかった語での絞り込みから漏れるため。
+
+    now を渡すと、公開から PUBLISHED_WITHIN_DAYS を過ぎた持ち越し分を落とす。
+    検索は直近90日に絞っているので、それより古い動画はもう取り直されず、
+    落とさないと古い数字のまま居座り続ける。
+
+    持ち越し分のスコアは計算し直さない。再生数が前回のままなので、今日の時刻で
+    計算すると「直近の伸び」が 0 になってしまう。前回計算した値を残す。
     """
     carried = drop_unknown_labels(
         [v for v in existing if v.get("videoId")], genres, modifiers)
+    if now is not None:
+        cutoff = now - timedelta(days=PUBLISHED_WITHIN_DAYS)
+        # 公開日時が読めない動画は判断できないので残す
+        carried = [v for v in carried
+                   if parse_iso8601(v.get("publishedAt")) is None
+                   or parse_iso8601(v.get("publishedAt")) > cutoff]
     by_id = {v["videoId"]: v for v in carried}
     for video in videos:
+        old = by_id.get(video["videoId"])
+        if old:
+            for key in ("categories", "modifiers", "matchedKeywords"):
+                merged = list(video.get(key) or [])
+                merged += [x for x in (old.get(key) or []) if x not in merged]
+                video[key] = merged
         by_id[video["videoId"]] = video
     return list(by_id.values())
 
@@ -1048,10 +1074,14 @@ def main():
     previous = load_previous_snapshot(today_name)
     apply_scores(videos, previous, now)
 
-    if quota_hit:
+    # 今回取れなかった動画を持ち越す。クォータ切れのときと、日替わりローテーションで
+    # 今日は検索しなかった語があるとき。持ち越し分のスコアは前回の値のまま残す
+    # （再生数が前回のままなので、今日の時刻で計算し直すと「直近の伸び」が0になる）。
+    # サンプルデータ（--mock）を本物のデータと混ぜないよう、--mock では持ち越さない
+    rotating = len(plan) > MAX_SEARCH_CALLS or args.limit is not None
+    if not args.mock and (quota_hit or rotating):
         videos = merge_with_existing(
-            videos, load_existing_videos(), genres, modifiers)
-        apply_scores(videos, previous, now)
+            videos, load_existing_videos(), genres, modifiers, now)
 
     videos.sort(key=lambda v: v["score"]["velocity"], reverse=True)
     save(videos, categories, modifier_names, tracker, now, is_mock=args.mock)

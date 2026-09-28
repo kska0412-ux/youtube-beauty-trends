@@ -5,8 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <!-- 公開リポジトリで配信されるので、検索結果には出さない -->
 <meta name="robots" content="noindex, nofollow">
+<!-- LINE などのアプリ内ブラウザは前に開いたページを覚えていて、更新後も古い版を
+     出し続けることがある。毎日更新するページなので、毎回取り直させる -->
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>YouTube Research Tool</title>
-<link rel="stylesheet" href="style.css">
+<!-- ?v= は画面の作りを変えたときに上げる。上げないとアプリ内ブラウザが古い CSS/JS を使い続ける -->
+<link rel="stylesheet" href="style.css?v=20260928">
 </head>
 <body>
 <div class="wrap">
@@ -14,78 +20,45 @@
   <header class="head">
     <!-- 単語ごとに nb で括り、狭い画面でも語の途中では折らない -->
     <h1><span class="nb">YouTube</span> <span class="nb">Research</span> <span class="nb">Tool</span></h1>
-    <p class="ver">直近90日に公開された美容系の動画から、いま伸びているものを並べています（ショートは除く）</p>
-    <p class="stamp" id="stamp">読み込み中…</p>
+    <p class="ver"><span class="nb">直近90日に</span><span class="nb">公開された</span><span class="nb">美容系の</span><span class="nb">動画から、</span><span class="nb">いま伸びている</span><span class="nb">ものを</span><span class="nb">並べています</span><span class="nb">（ショートは除く）</span></p>
   </header>
 
-  <section class="panel" aria-label="集計">
-    <div class="summary">
-      <div class="stat">
-        <span class="stat-label">表示中の動画</span>
-        <span class="stat-value"><span id="sum-shown">0</span><span class="unit">本</span></span>
-      </div>
-      <div class="stat">
-        <span class="stat-label">収集した動画</span>
-        <span class="stat-value"><span id="sum-total">0</span><span class="unit">本</span></span>
-      </div>
-      <div class="stat">
-        <span class="stat-label">チャンネル数</span>
-        <span class="stat-value"><span id="sum-channels">0</span><span class="unit">件</span></span>
-      </div>
-      <div class="stat">
-        <span class="stat-label">7日以内の動画</span>
-        <span class="stat-value"><span id="sum-week">0</span><span class="unit">本</span></span>
-      </div>
-    </div>
-    <div class="breakdown">
-      <p class="breakdown-title">カテゴリ別の件数（表示中）</p>
-      <div id="breakdown"></div>
-    </div>
-  </section>
-
   <div class="controls" id="controls">
-    <div class="row row-main">
-      <span class="filter-label">並び替え</span>
+    <!-- 検索窓がこのページの主役。ジャンルのタブは置かず、調べたい語を打って探す -->
+    <form class="row search-row" id="search-form" role="search">
+      <div class="search-box">
+        <input type="search" id="search" autocomplete="off"
+               enterkeyhint="search" aria-label="検索ワード"
+               role="combobox" aria-autocomplete="list"
+               aria-controls="genre-suggest" aria-expanded="false"
+               placeholder="調べたいワード（例: ネイルサロン）">
+        <ul class="suggest" id="genre-suggest" role="listbox" aria-label="収集ジャンル" hidden></ul>
+      </div>
+      <button type="submit" class="search-btn">検索</button>
+    </form>
+    <p class="hint" id="hint"></p>
+
+    <div class="row">
       <select id="sort" aria-label="並び替え">
-        <option value="velocity">伸びの速さ</option>
-        <option value="acceleration">加速度（直近の伸び）</option>
-        <option value="views">再生数</option>
-        <option value="subRatio">登録者比</option>
-        <option value="newest">新着順</option>
+        <option value="velocity">並び: 伸びの速さ</option>
+        <option value="acceleration">並び: 加速度（直近の伸び）</option>
+        <option value="views">並び: 再生数</option>
+        <option value="subRatio">並び: 登録者比</option>
+        <option value="newest">並び: 新着順</option>
+      </select>
+      <select id="subs" aria-label="登録者数の上限">
+        <option value="0">登録者数: 制限なし</option>
+        <option value="10000">登録者数: 1万人以下</option>
+        <option value="50000">登録者数: 5万人以下</option>
+        <option value="100000">登録者数: 10万人以下</option>
+        <option value="500000">登録者数: 50万人以下</option>
       </select>
     </div>
 
-    <div class="filter-body" id="filter-body">
-      <div class="row">
-        <span class="filter-label">登録者数</span>
-        <select id="subs" aria-label="登録者数の上限">
-          <option value="0">制限なし</option>
-          <option value="10000">1万人以下</option>
-          <option value="50000">5万人以下</option>
-          <option value="100000">10万人以下</option>
-          <option value="500000">50万人以下</option>
-        </select>
-      </div>
-
-      <div class="row">
-        <span class="filter-label">公開日</span>
-        <div class="chips" id="period" role="group" aria-label="公開日で絞り込む"></div>
-      </div>
-
-      <div class="row">
-        <span class="filter-label">主ジャンル</span>
-        <div class="chips" id="categories" role="group" aria-label="主ジャンルで絞り込む"></div>
-      </div>
-
-      <div class="row">
-        <span class="filter-label">掛け合わせ</span>
-        <div class="chips" id="modifiers" role="group" aria-label="掛け合わせ語で絞り込む"></div>
-      </div>
-
-      <div class="row">
-        <input type="search" id="search" placeholder="タイトル・チャンネル名で検索" aria-label="フリーワード検索">
-        <button type="button" id="csv" class="btn">CSVで保存</button>
-      </div>
+    <div class="row">
+      <span class="filter-label">公開日</span>
+      <div class="chips" id="period" role="group" aria-label="公開日で絞り込む"></div>
+      <button type="button" id="csv" class="btn">CSVで保存</button>
     </div>
   </div>
 
@@ -93,6 +66,6 @@
   <div id="list"></div>
 
 </div>
-<script src="app.js"></script>
+<script src="app.js?v=20260928"></script>
 </body>
 </html>

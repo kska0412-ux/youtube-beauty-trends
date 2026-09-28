@@ -73,13 +73,18 @@ check("しきい値は60秒", collect.SHORT_MAX_SEC, 60)
 
 print("\n[3] keywords.yml の読み取り")
 genres, modifiers, required_any, exclude = collect.load_keywords()
-check("主ジャンル数", len(genres), 11)
+check("主ジャンル数", len(genres), 39)
 check("掛け合わせ語数", len(modifiers), 6)
 check("主ジャンルは1ジャンル1語", [len(v) for v in genres.values()], lambda v: set(v) == {1})
 check("主ジャンルの並び順", list(genres), [
-    "ヘッドスパ", "アートメイク", "リンパ",
+    "ヘッドスパ", "アートメイク", "リンパ", "小顔",
     "セラピスト", "エステティシャン", "美容サロン", "オンライン秘書",
-    "更年期ケア", "ピラティス", "鍼灸", "育毛"])
+    "更年期ケア", "ピラティス", "鍼灸", "育毛",
+    # 2026-09-28 に足した27ジャンル
+    "リラク", "痩身", "ダイエット", "マツエク", "まつ毛パーマ", "アイラッシュ", "足ツボ",
+    "脱毛", "ネイル", "ジェルネイル", "マグネットネイル", "腸もみ", "便秘", "自律神経",
+    "バストケア", "バストアップ", "ホワイトニング", "フットケア", "巻き爪", "頭痛",
+    "毛穴", "ニキビ", "シミ", "シワ", "ハーブピーリング", "整体", "姿勢"])
 check("意図的に外したジャンルは入っていない",
       [g for g in INTENTIONALLY_DROPPED if g in genres], [])
 check("掛け合わせの並び順", list(modifiers),
@@ -124,10 +129,10 @@ print("\n[5] 検索プランの組み立て")
 plan = collect.build_search_plan(genres, modifiers)
 combined = [e for e in plan if e["modifier"]]
 solo = [e for e in plan if not e["modifier"]]
-check("単独検索は主ジャンルの数だけ", len(solo), 11)
+check("単独検索は主ジャンルの数だけ", len(solo), 39)
 check("掛け合わせ検索は combine_with の合計", len(combined),
       sum(len(v) for v in modifiers.values()))
-check("検索回数の合計", len(plan), 49)
+check("検索回数の合計", len(plan), 81)
 check("主ジャンルが先、掛け合わせが後",
       [bool(e["modifier"]) for e in plan],
       lambda flags: flags == sorted(flags))
@@ -149,10 +154,16 @@ check("検索は関連度順にする", collect.SEARCH_ORDER, "relevance")
 # --- 6. 日替わりローテーション --------------------------------------------
 
 print("\n[6] ローテーションが要るかどうか")
-check("49件は上限60以下なので1日で全部回る",
-      len(collect.select_keywords(plan, collect.MAX_SEARCH_CALLS, datetime.now(JST))), 49)
-check("ローテーションは発動しない",
-      len(plan) <= collect.MAX_SEARCH_CALLS, True)
+# 2026-09-28 に27ジャンルと小顔を足して81語になった。1日60語までなので日替わりで回す
+check("81件は上限60を超えるのでローテーションが発動する",
+      len(plan) > collect.MAX_SEARCH_CALLS, True)
+check("1日に検索するのは上限ちょうど",
+      len(collect.select_keywords(plan, collect.MAX_SEARCH_CALLS, datetime.now(JST))),
+      collect.MAX_SEARCH_CALLS)
+d0 = datetime(2026, 9, 29, 6, 0, tzinfo=JST)
+two_days = {e["query"] for k in range(2)
+            for e in collect.select_keywords(plan, collect.MAX_SEARCH_CALLS, d0 + timedelta(days=k))}
+check("どの日から始めても2日で全81語を一周する", len(two_days), 81)
 
 many = [{"genre": "c", "modifier": None, "query": f"語{i:03d}"} for i in range(130)]
 day1 = datetime(2026, 9, 3, 6, 0, tzinfo=JST)
@@ -170,17 +181,54 @@ check("同じ日なら同じ結果（再実行しても崩れない）",
 
 print("\n[7] クォータの数え方（最悪ケース）")
 tracker = collect.QuotaTracker()
-for _ in range(len(plan)):
+daily = min(len(plan), collect.MAX_SEARCH_CALLS)
+for _ in range(daily):
     tracker.add_search()
-# 49回の検索 × 50件 = 2,450件。videos.list も channels.list も50件ずつなので49回ずつ。
-worst_list_calls = 2 * -(-len(plan) * collect.SEARCH_PAGE_SIZE // collect.BATCH_SIZE)
+# 1日60回の検索 × 50件 = 3,000件。videos.list も channels.list も50件ずつなので60回ずつ。
+worst_list_calls = 2 * -(-daily * collect.SEARCH_PAGE_SIZE // collect.BATCH_SIZE)
 for _ in range(worst_list_calls):
     tracker.add_list()
-check("検索の消費", len(plan) * collect.UNIT_SEARCH, 4900)
-check("詳細＋チャンネルの最悪回数", worst_list_calls, 98)
-check("1日の最悪消費ユニット", tracker.units, 4998)
+check("検索の消費", daily * collect.UNIT_SEARCH, 6000)
+check("詳細＋チャンネルの最悪回数", worst_list_calls, 120)
+check("1日の最悪消費ユニット", tracker.units, 6120)
 check("1日上限10,000に収まる", tracker.units, lambda u: u < 10000)
-check("ログに概算が出る", tracker.summary(), lambda s: "4998" in s)
+check("ログに概算が出る", tracker.summary(), lambda s: "6120" in s)
+
+# --- 7b. ローテーション中の持ち越し ---------------------------------------
+
+print("\n[7b] 今日検索しなかった語の動画を持ち越す")
+NOW7 = datetime(2026, 9, 29, 6, 0, tzinfo=JST)
+old_score = {"velocity": 10.0, "acceleration": 123.0, "subRatio": 1.0}
+existing7 = [
+    {"videoId": "a", "publishedAt": "2026-09-20T00:00:00Z", "categories": ["ネイル"],
+     "modifiers": [], "matchedKeywords": ["ネイル"], "viewCount": 100, "score": dict(old_score)},
+    {"videoId": "b", "publishedAt": "2026-09-20T00:00:00Z", "categories": ["ネイル"],
+     "modifiers": ["経営"], "matchedKeywords": ["ネイル"], "viewCount": 50, "score": dict(old_score)},
+    {"videoId": "old", "publishedAt": "2026-05-01T00:00:00Z", "categories": ["ネイル"],
+     "modifiers": [], "matchedKeywords": ["ネイル"], "viewCount": 5, "score": dict(old_score)},
+    {"videoId": "gone", "publishedAt": "2026-09-20T00:00:00Z", "categories": ["消えたジャンル"],
+     "modifiers": [], "matchedKeywords": ["消えたジャンル"], "viewCount": 5, "score": dict(old_score)},
+]
+today7 = [
+    {"videoId": "a", "publishedAt": "2026-09-20T00:00:00Z", "categories": ["ジェルネイル"],
+     "modifiers": [], "matchedKeywords": ["ジェルネイル"], "viewCount": 300,
+     "score": {"velocity": 30.0, "acceleration": 50.0, "subRatio": 3.0}},
+]
+g7 = {"ネイル": ["ネイル"], "ジェルネイル": ["ジェルネイル"]}
+m7 = {"経営": ["ネイル"]}
+merged7 = {v["videoId"]: v for v in collect.merge_with_existing(
+    [dict(v) for v in today7], [dict(v) for v in existing7], g7, m7, NOW7)}
+check("今日検索しなかった語の動画が残る", "b" in merged7, True)
+check("今日取れた動画は今日の数字になる", merged7["a"]["viewCount"], 300)
+check("同じ動画は前回のジャンルも合わせる", merged7["a"]["categories"], ["ジェルネイル", "ネイル"])
+check("検索語も合わせる", merged7["a"]["matchedKeywords"], ["ジェルネイル", "ネイル"])
+check("持ち越し分のスコアは前回のまま（直近の伸びを0にしない）",
+      merged7["b"]["score"]["acceleration"], 123.0)
+check("公開から90日を過ぎた持ち越し分は落とす", "old" in merged7, False)
+check("辞書から消えたジャンルだけの動画は落とす", "gone" in merged7, False)
+check("now を渡さなければ古さでは落とさない（クォータ切れ時の従来動作）",
+      "old" in {v["videoId"] for v in collect.merge_with_existing(
+          [], [dict(v) for v in existing7], g7, m7)}, True)
 
 # --- 8. APIレスポンスの変換 -----------------------------------------------
 
@@ -298,9 +346,10 @@ finally:
 # --- 11. 辞書を変えたときに古いカテゴリ名をどう扱うか ----------------------
 
 print("\n[11] 辞書から消えたカテゴリ名の扱い")
+# 「脱毛」は 2026-09-28 から正式なジャンルなので、消えた名前の例には使わない
 legacy = [
-    {"videoId": "old1", "categories": ["脱毛", "フェイシャル"], "modifiers": []},
-    {"videoId": "mix1", "categories": ["脱毛", "ヘッドスパ"], "modifiers": ["経営", "旧掛け合わせ"]},
+    {"videoId": "old1", "categories": ["旧ジャンル", "フェイシャル"], "modifiers": []},
+    {"videoId": "mix1", "categories": ["旧ジャンル", "ヘッドスパ"], "modifiers": ["経営", "旧掛け合わせ"]},
     {"videoId": "now1", "categories": ["育毛"], "modifiers": ["手技"]},
 ]
 kept = collect.drop_unknown_labels([dict(v) for v in legacy], genres, modifiers)
@@ -319,7 +368,7 @@ existing = [
     {"videoId": "both", "title": "古い方", "viewCount": 100,
      "categories": ["育毛"], "modifiers": []},
     {"videoId": "stale", "title": "旧辞書のみの動画", "viewCount": 100,
-     "categories": ["脱毛"], "modifiers": []},
+     "categories": ["旧ジャンル"], "modifiers": []},
 ]
 fresh = [{"videoId": "both", "title": "新しい方", "viewCount": 500,
           "categories": ["育毛"], "modifiers": ["メニュー"]},
